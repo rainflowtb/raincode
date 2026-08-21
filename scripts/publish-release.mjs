@@ -171,7 +171,7 @@ async function main() {
       body: JSON.stringify({
         tag_name: tag,
         target_commitish: "main",
-        name: `RainCode ${version}`,
+        name: `RainCode ${version} (macOS + Windows)`,
         body: releaseBody(version, built),
         draft: false,
         prerelease: false,
