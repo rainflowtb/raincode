@@ -1,13 +1,13 @@
 /**
- * Single owner for third-party account connections (~/.pi/agent/accounts.json).
+ * Single owner for third-party account connections (~/.raincode/accounts.json).
  * Server-only, light-runtime safe (pure fs — no SDK import).
  *
  * Only the "connected" metadata is ever returned to the renderer; tokens stay
  * server-side and are used for GitHub API calls / git pushes.
  */
 import fs from "fs";
-import os from "os";
 import path from "path";
+import { getAgentDir } from "./agent-dir";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 
 export type GithubAccount = {
@@ -33,7 +33,7 @@ export type GithubAccountPublic = {
 };
 
 function accountsFilePath(): string {
-  return path.join(os.homedir(), ".pi", "agent", "accounts.json");
+  return path.join(getAgentDir(), "accounts.json");
 }
 
 function emptyAccounts(): AccountsFile {

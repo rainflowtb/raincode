@@ -1,5 +1,5 @@
 /**
- * Load native subagent types from ~/.pi/agent/agents and <cwd>/.pi/agents.
+ * Load native subagent types from ~/.raincode/agents and <cwd>/.pi/agents.
  */
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { basename, join } from "path";

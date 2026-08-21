@@ -1,5 +1,5 @@
 /**
- * First-party agent capabilities shipped inside RainCode (not via ~/.pi/agent/npm).
+ * First-party agent capabilities shipped inside RainCode (not via ~/.raincode/npm).
  *
  * Todo, ask-user, subagents, permission, and MCP are native factories.
  * Legacy settings.json packages[] entries are stripped on boot.

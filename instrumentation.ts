@@ -1,6 +1,13 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  // Pin the agent dir for the pi SDK before anything can load it: RainCode
+  // uses ~/.raincode, separate from pi's ~/.pi/agent. Explicit env still wins.
+  if (!process.env.PI_CODING_AGENT_DIR?.trim()) {
+    const { getAgentDir } = await import("@/lib/agent-dir");
+    process.env.PI_CODING_AGENT_DIR = getAgentDir();
+  }
+
   // Keep the critical path tiny: proxy + dispatcher + spawn env + managed AGENTS.md.
   // Heavy extension prewarm is deferred so the first Electron health/page request
   // does not fight disk/CPU with SDK + extension factory loads (big on Windows).

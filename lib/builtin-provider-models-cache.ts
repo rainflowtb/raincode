@@ -2,7 +2,7 @@
  * Disk cache for built-in (OAuth / API-key) provider model catalogs.
  *
  * SDK-free on purpose so Settings can open from the light runtime:
- * - Default read: ~/.pi/agent/builtin-provider-models-cache.json
+ * - Default read: ~/.raincode/builtin-provider-models-cache.json
  * - Network/SDK refresh only when the user clicks "Refresh models" (?fresh=1)
  *
  * Disabled flags are NOT the source of truth here — re-applied from

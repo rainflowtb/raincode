@@ -8,7 +8,7 @@ import { getAgentDir } from "./agent-dir";
  *
  * Sources (merged):
  * 1. models.json `providers.*.models[].disabled: true` (custom + free providers)
- * 2. ~/.pi/agent/disabled-models.json string[] of "provider/modelId"
+ * 2. ~/.raincode/disabled-models.json string[] of "provider/modelId"
  *    (built-in API-key / OAuth providers — cannot put unknown top-level keys in
  *    models.json without failing the SDK schema)
  */

@@ -1,6 +1,6 @@
 /**
  * Project memory tools for RainCode sessions.
- * Storage lives under ~/.pi/agent/project-memory/ (not in the user repo).
+ * Storage lives under ~/.raincode/project-memory/ (not in the user repo).
  * Global/user-scope memory is intentionally not exposed.
  */
 import { Type } from "typebox";

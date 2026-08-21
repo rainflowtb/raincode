@@ -1,5 +1,5 @@
 /**
- * Read/write ~/.pi/agent/auth.json with a process-safe lock.
+ * Read/write ~/.raincode/auth.json with a process-safe lock.
  *
  * Intentionally avoids a static bare `import "proper-lockfile"` so packaged
  * ESM trees cannot fail native import() with "Cannot find package" when the

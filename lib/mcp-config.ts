@@ -2,7 +2,7 @@
  * MCP server config helpers for RainCode.
  * Compatible with standard `.mcp.json` shapes.
  *
- * Editable store: ~/.pi/agent/mcp.json
+ * Editable store: ~/.raincode/mcp.json
  * Project overlay: <cwd>/.pi/mcp.json
  * Runtime owner: lib/first-party/mcp
  */
@@ -218,7 +218,7 @@ export function removeAgentMcpServer(name: string): void {
 
 /**
  * Toggle disabled flag.
- * - Editable agent servers: write into ~/.pi/agent/mcp.json
+ * - Editable agent servers: write into ~/.raincode/mcp.json
  * - Others: write disabled overlay into project .pi/mcp.json when cwd provided,
  *   else into agent mcp.json as a disabled-only stub (enable removes stub if no other fields).
  */

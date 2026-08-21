@@ -86,7 +86,7 @@ If (1)–(3) cannot be answered, **MUST NOT** land a patch-style fix.
 Renderer (app://)      Electron main            Agent runtimes (child procs, IPC)
   │                        │                               │
   ├─ apiFetch("/api/…") ──▶ runtime-host routes by path    │
-  │                        ├──────────▶ light  ─ reads ~/.pi/agent/sessions/,
+  │                        ├──────────▶ light  ─ reads ~/.raincode/sessions/,
   │                        │                     files, git — never loads the SDK
   │                        └──────────▶ heavy  ─ SDK + AgentSession registry
   │                        │                               │
@@ -128,7 +128,7 @@ app/api/
   files/[...path]/route.ts        GET file contents for viewer
   home/route.ts                   GET user home directory
   models/route.ts                 GET { models, modelList, defaultModel }
-  models-config/route.ts          GET/PUT — read/write ~/.pi/agent/models.json
+  models-config/route.ts          GET/PUT — read/write ~/.raincode/models.json
   models-config/test/route.ts     POST test a configured model/provider
   memory-review/route.ts          POST { cwd, sessionId } — background memory review
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
@@ -228,15 +228,15 @@ Cold-load performance (ChatWindow): first paint mounts `FIRST_PAINT_RENDER_ITEMS
 Every session uses the full built-in tool set (`getFullToolNames()` → `toolNames[]` on `POST /api/agent/new` and `set_tools` on mount). When tools are fully disabled (`toolNames = []`), `rpc-manager.ts` passes an empty tool allow-list and forces `agent.state.systemPrompt = ""` after startup/reload/resource discovery.
 
 ### Model defaults for new sessions
-`GET /api/models` returns `defaultModel` preferring RainCode **model roles** (`raincode.json` → `modelRoles.default`) then `~/.pi/agent/settings.json`. `ChatWindow` pre-selects this on mount for new sessions.
+`GET /api/models` returns `defaultModel` preferring RainCode **model roles** (`raincode.json` → `modelRoles.default`) then `~/.raincode/settings.json`. `ChatWindow` pre-selects this on mount for new sessions.
 
 ### Model roles / Git Review / project memory (Phase A)
-- **Roles** (`default` / `smol` / `plan`) live in `~/.pi/agent/raincode.json` via `lib/web-settings.ts` + Settings UI. Changing roles rewrites managed agent frontmatter (`Explore`/`Plan`/`Reviewer`) through `syncAgentModelsFromRoles()`.
+- **Roles** (`default` / `smol` / `plan`) live in `~/.raincode/raincode.json` via `lib/web-settings.ts` + Settings UI. Changing roles rewrites managed agent frontmatter (`Explore`/`Plan`/`Reviewer`) through `syncAgentModelsFromRoles()`.
 - **Git Review**: `POST /api/git/review` builds a prompt; GitPanel starts a new session with the plan-role model and the managed `Reviewer` subagent. Assistant JSON is rendered by `ReviewSummaryCard`.
 - **Edit (hashline-first)**: `createPiWebEditToolDefinition` prefers omp-style `{ input: "[path#TAG]\nSWAP…" }` (`lib/hashline-edit.ts`); classic `{ path, edits }` still works (strict then SDK fuzzy). Failures get kind/excerpt recovery (`lib/edit-failure.ts`).
 - **LSP health**: catalog + PATH discovery in `lib/lsp-health.ts`; `GET /api/lsp?cwd=`; Settings → Tools; agent tool `lsp({ action })` (servers|hover|definition|references|rename) includes install hints. TS/JS keeps built-in service fallback.
 - **GitHub thin layer**: `lib/github.ts` + agent tool `github` (gh CLI, read-only). Virtual paths `pr://N`, `pr://N/diff`, `issue://N` work via `read` and `github({ action:"read" })`. API: `GET/POST /api/github`.
-- **Project memory**: project-only store under `~/.pi/agent/project-memory/<key>/facts.jsonl` with a hard char budget (`projectBudgetChars` default 4000; usage = Σ text.length + 20/fact). Overflow rejects with current entries + a consolidate instruction. `memory_retain` supports an atomic `operations[]` batch (add/replace/remove by unique substring, all-or-nothing); `memory_recall` searches project facts; `memory_reflect` is heuristic + optional utility-model synthesis. When auto-inject is on, top-K facts go into the system prompt via `appendSystemPromptOverride` in `startRpcSession`. Per-prompt, `send("prompt")` also recalls query-relevant facts (`buildQueryMemoryContext`, ≤800 chars, excluding facts already in the system top-K) as a hidden `memory-context` custom message (`sendCustomMessage(..., { deliverAs: "nextTurn" })`). `isHiddenContextMessage` keeps them out of the transcript. API: `POST /api/project-memory` with `{ action: "reflect" }`.
+- **Project memory**: project-only store under `~/.raincode/project-memory/<key>/facts.jsonl` with a hard char budget (`projectBudgetChars` default 4000; usage = Σ text.length + 20/fact). Overflow rejects with current entries + a consolidate instruction. `memory_retain` supports an atomic `operations[]` batch (add/replace/remove by unique substring, all-or-nothing); `memory_recall` searches project facts; `memory_reflect` is heuristic + optional utility-model synthesis. When auto-inject is on, top-K facts go into the system prompt via `appendSystemPromptOverride` in `startRpcSession`. Per-prompt, `send("prompt")` also recalls query-relevant facts (`buildQueryMemoryContext`, ≤800 chars, excluding facts already in the system top-K) as a hidden `memory-context` custom message (`sendCustomMessage(..., { deliverAs: "nextTurn" })`). `isHiddenContextMessage` keeps them out of the transcript. API: `POST /api/project-memory` with `{ action: "reflect" }`.
 - **Background memory review** (`lib/memory-review.ts` + `POST /api/memory-review`): ChatWindow fires it fire-and-forget after every agent-end; a per-session counter (`globalThis.__raincodeMemoryReviewTurnCounts`, resets on restart) runs the actual review only every 10th user turn. One utility-model JSON completion (smol → plan → default role chain) over the last ~10 transcript snippets (~6KB); validated facts are written via `retainMemoryFact` (secret guard / dedupe / budget are the safety net). Saved facts surface as a subtle info notice.
 
 ### SSE reconnect on page refresh mid-stream
@@ -264,7 +264,7 @@ Pi emits `compaction_start` / `compaction_end`. Manual compact is a blocking POS
 ### Built-in packages and skills
 - **First-party factories** (`todo`, `ask_user_question`, permission, subagents, MCP) live under `lib/first-party/` and register via `extensionFactories` (no jiti).
 - Compaction uses the SDK native path (`pi-better-compaction` is not shipped).
-- Registration is centralized in `lib/builtin-extensions.ts` → `startRpcSession`. Nothing is installed into `~/.pi/agent/npm` on boot.
+- Registration is centralized in `lib/builtin-extensions.ts` → `startRpcSession`. Nothing is installed into `~/.raincode/npm` on boot.
 - `lib/ensure-builtin-packages.ts` migrates legacy `settings.json` `packages[]` and prewarms factories. No npm install/update.
 - Extension runtime UI (confirm/select/input/editor, widgets, status chips, custom panels) is handled by `rpc-manager` + `ChatWindow` — there is no user-facing package manager UI.
 - `/api/skills` uses `DefaultResourceLoader` so settings paths, package skills, and project `.agents/skills` are listed the same way the runtime sees them.
@@ -272,7 +272,7 @@ Pi emits `compaction_start` / `compaction_end`. Manual compact is a blocking POS
 - `/api/skills/install` shells through `npx skills add ... --agent pi`; project installs run with the selected cwd.
 
 ### Auth and model config
-- `ModelsConfig` combines models from `~/.pi/agent/models.json` with provider auth status from pi's `AuthStorage`/`ModelRegistry`.
+- `ModelsConfig` combines models from `~/.raincode/models.json` with provider auth status from pi's `AuthStorage`/`ModelRegistry`.
 - OAuth/device-code/manual-code flows are streamed by `GET /api/auth/login/[provider]`; manual code responses POST back with a short-lived token stored in `globalThis.__raincodeLoginCallbacks`.
 - API-key routes store and remove keys through `AuthStorage`. Status endpoints must never return the raw key.
 - The model test route is `app/api/models-config/test/route.ts`; `app/api/models/test/` is not a real route.
@@ -284,7 +284,7 @@ Pi emits `compaction_start` / `compaction_end`. Manual compact is a blocking POS
 
 ## Pi Session File Format
 
-Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
+Location: `~/.raincode/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 
 ```jsonl
 {"type":"session","version":3,"id":"<uuid>","timestamp":"...","cwd":"/path","parentSession":"/abs/path/to/parent.jsonl"}

@@ -3,11 +3,11 @@
  *
  * Enforcement lives in lib/first-party/permission. This module owns
  * the flat config file that factory reads:
- *   ~/.pi/agent/extensions/pi-permission-system/config.json
+ *   ~/.raincode/extensions/pi-permission-system/config.json
  *
  * Two documents, one direction of flow:
  *   - **base policy** — what the user authors in the settings editor. Lives in
- *     the RainCode sidecar (`~/.pi/agent/pi-permissions.jsonc`) because the
+ *     the RainCode sidecar (`~/.raincode/pi-permissions.jsonc`) because the
  *     extension's config schema is a `strictObject`: any RainCode-specific key
  *     added to config.json would make the whole scope fail closed.
  *   - **effective policy** — base + the current AgentMode overlay, written to

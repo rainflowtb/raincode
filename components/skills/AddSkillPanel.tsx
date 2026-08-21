@@ -96,7 +96,7 @@ export function AddSkillPanel({
 
   const installPath =
     scope === "global"
-      ? "~/.pi/agent/skills/"
+      ? "~/.raincode/skills/"
       : `${shortenPath(cwd)}/.pi/skills/`;
 
   return (

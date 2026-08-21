@@ -1,6 +1,6 @@
 /**
  * Per-model field overrides for built-in (API-key / OAuth) catalogs.
- * Stored under ~/.pi/agent/model-overrides.json as "provider/modelId" → fields.
+ * Stored under ~/.raincode/model-overrides.json as "provider/modelId" → fields.
  * Used when official catalog does not supply thinkingLevelMap / etc.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";

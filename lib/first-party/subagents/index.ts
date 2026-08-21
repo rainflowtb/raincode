@@ -53,7 +53,7 @@ function parentConversationSeed(ctx: ExtensionContext): string {
 
 const DESCRIPTION = [
   "Launch a specialized subagent for a self-contained task.",
-  "Available types: Explore, Plan, Reviewer, general-purpose (plus any ~/.pi/agent/agents or <cwd>/.pi/agents).",
+  "Available types: Explore, Plan, Reviewer, general-purpose (plus any ~/.raincode/agents or <cwd>/.pi/agents).",
   "Use Explore for read-only search, Plan for design, Reviewer for git/patch review, general-purpose for multi-file work.",
   "Set run_in_background=true to run agents in parallel during this turn. The parent turn still collects results before it can finish.",
   "Pass resume=<agent id> with a new prompt to continue the same child conversation.",
@@ -167,7 +167,7 @@ export function createSubagentsInlineExtension(): InlineExtension {
           prompt: Type.String({ description: "The task for the agent to perform." }),
           description: Type.String({ description: "A short (3-5 word) description shown in the UI." }),
           subagent_type: Type.String({
-            description: "Agent type: Explore, Plan, Reviewer, general-purpose, or a custom ~/.pi/agent/agents name.",
+            description: "Agent type: Explore, Plan, Reviewer, general-purpose, or a custom ~/.raincode/agents name.",
           }),
           model: Type.Optional(Type.String({ description: "Optional provider/modelId override." })),
           thinking: Type.Optional(Type.String({ description: "Thinking level override." })),

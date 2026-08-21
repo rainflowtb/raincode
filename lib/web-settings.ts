@@ -67,7 +67,7 @@ export type CodeThemeId =
   | "materialDark";
 
 /**
- * RainCode app preferences (stored in ~/.pi/agent/raincode.json).
+ * RainCode app preferences (stored in ~/.raincode/raincode.json).
  * Electron reads a subset at startup (proxy / CA / GPU).
  */
 export type WebSettings = {
@@ -95,7 +95,7 @@ export type WebSettings = {
   advisorModel: ModelRef | null;
   /**
    * Opt-in Lean Mode: portable anti-bloat policy + optional post-edit review.
-   * Default off. Does not rewrite ~/.pi/agent/AGENTS.md.
+   * Default off. Does not rewrite ~/.raincode/AGENTS.md.
    */
   leanMode: LeanModeSettings;
 

@@ -1,5 +1,5 @@
 /**
- * Migrate away from ~/.pi/agent npm-installed "builtin packages".
+ * Migrate away from ~/.raincode npm-installed "builtin packages".
  *
  * First-party capabilities register via lib/builtin-extensions.ts.
  * This module only:

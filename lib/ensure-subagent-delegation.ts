@@ -5,7 +5,7 @@ import { formatRoleModelForAgent } from "./model-roles";
 import { readWebSettings, type WebSettings } from "./web-settings";
 
 /**
- * Subagent type files (auto-deployed into ~/.pi/agent on boot).
+ * Subagent type files (auto-deployed into ~/.raincode on boot).
  *
  * Native RainCode subagents read these markdown files for Explore / Plan /
  * Reviewer / general-purpose. The AGENTS.md block tells the parent model
@@ -13,8 +13,8 @@ import { readWebSettings, type WebSettings } from "./web-settings";
  * This module only writes those files. The native factory in
  * lib/first-party/subagents reads them at spawn time.
  *
- *  1. A managed block in ~/.pi/agent/AGENTS.md tells the parent to delegate.
- *  2. Agent files in ~/.pi/agent/agents/*.md supply Explore / Plan / Reviewer /
+ *  1. A managed block in ~/.raincode/AGENTS.md tells the parent to delegate.
+ *  2. Agent files in ~/.raincode/agents/*.md supply Explore / Plan / Reviewer /
  *     general-purpose prompts and tool allow-lists.
  *
  * Both mechanisms are idempotent and respect user customization:
@@ -255,7 +255,7 @@ Hard rules for the JSON:
 function ensureAgentsMdPolicy(agentsMdPath: string): string | null {
   if (!existsSync(agentsMdPath)) {
     writeFileSync(agentsMdPath, `${SUBAGENT_POLICY_BLOCK}\n`, "utf8");
-    return "Created ~/.pi/agent/AGENTS.md with subagent delegation policy";
+    return "Created ~/.raincode/AGENTS.md with subagent delegation policy";
   }
 
   const existing = readFileSync(agentsMdPath, "utf8");
@@ -267,12 +267,12 @@ function ensureAgentsMdPolicy(agentsMdPath: string): string | null {
     if (current === SUBAGENT_POLICY_BLOCK) return null;
     const next = existing.slice(0, startIdx) + SUBAGENT_POLICY_BLOCK + existing.slice(endIdx + AGENTS_BLOCK_END.length);
     writeFileSync(agentsMdPath, next, "utf8");
-    return "Updated subagent delegation policy in ~/.pi/agent/AGENTS.md";
+    return "Updated subagent delegation policy in ~/.raincode/AGENTS.md";
   }
 
   const separator = existing.endsWith("\n") ? "\n" : "\n\n";
   writeFileSync(agentsMdPath, `${existing}${separator}${SUBAGENT_POLICY_BLOCK}\n`, "utf8");
-  return "Appended subagent delegation policy to ~/.pi/agent/AGENTS.md";
+  return "Appended subagent delegation policy to ~/.raincode/AGENTS.md";
 }
 
 function ensureAgentOverride(agentsDir: string, filename: string, content: string): string | null {
@@ -309,7 +309,7 @@ function managedAgentFiles(settings: WebSettings): Array<{ filename: string; con
 let done = false;
 
 /**
- * Deploy subagent delegation assets into ~/.pi/agent. Synchronous, idempotent,
+ * Deploy subagent delegation assets into ~/.raincode. Synchronous, idempotent,
  * and never throws — safe to call from instrumentation on every boot.
  */
 export function ensureSubagentDelegation(): string[] {

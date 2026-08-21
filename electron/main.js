@@ -13,6 +13,14 @@ const { startRuntime, registerApiBridge, getRuntimeProcess } = require("./runtim
 registerAppScheme();
 
 const isPackaged = app.isPackaged;
+
+// RainCode keeps its own config dir (~/.raincode), fully separate from pi's
+// ~/.pi/agent. The pi SDK resolves its config from $PI_CODING_AGENT_DIR at call
+// time, so pin it here before any agent runtime child process is spawned —
+// children inherit process.env. An explicitly set env var still wins.
+if (!process.env.PI_CODING_AGENT_DIR || !process.env.PI_CODING_AGENT_DIR.trim()) {
+  process.env.PI_CODING_AGENT_DIR = path.join(os.homedir(), ".raincode");
+}
 /**
  * Must match package.json build.appId / electron-builder Start Menu shortcut.
  * A mismatch on Windows makes toast clicks launch a bare electron.exe
@@ -108,11 +116,11 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-/** Read ~/.pi/agent/raincode.json (same file as lib/web-settings.ts). */
+/** Read ~/.raincode/raincode.json (same file as lib/web-settings.ts). */
 function readRaincodeSettingsFile() {
   try {
     const agentDir = process.env.PI_CODING_AGENT_DIR
-      || path.join(os.homedir(), ".pi", "agent");
+      || path.join(os.homedir(), ".raincode");
     let file = path.join(agentDir, "raincode.json");
     if (!fs.existsSync(file)) {
       // One-way rebrand migration from the legacy Pi Web settings file.
@@ -947,7 +955,7 @@ ipcMain.handle("raincode-desktop:notify", (_event, payload = {}) => {
 
 ipcMain.handle("raincode-desktop:get-web-settings-path", () => {
   const agentDir = process.env.PI_CODING_AGENT_DIR
-    || path.join(os.homedir(), ".pi", "agent");
+    || path.join(os.homedir(), ".raincode");
   return path.join(agentDir, "raincode.json");
 });
 

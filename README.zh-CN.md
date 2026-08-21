@@ -45,7 +45,7 @@ Electron 桌面端 · 浏览器 UI · [ct-jyjntc/pi-web](https://github.com/ct-j
 ---
 
 RainCode 是跑在你本机上的 **local-first 编程智能体工作区**。  
-打开项目、与智能体对话、审查 Git、浏览文件、开终端 —— 可用 **桌面端** 或 **浏览器**。应用本身 **不需要云端账号**；数据在 `~/.pi/agent`。
+打开项目、与智能体对话、审查 Git、浏览文件、开终端 —— 可用 **桌面端** 或 **浏览器**。应用本身 **不需要云端账号**；数据在 `~/.raincode`。
 
 | | |
 | :--- | :--- |
@@ -160,10 +160,10 @@ Electron main
 
 | 路径 | 作用 |
 | --- | --- |
-| `~/.pi/agent` | 默认数据根（`PI_CODING_AGENT_DIR`） |
+| `~/.raincode` | 默认数据根（`PI_CODING_AGENT_DIR`） |
 | `…/sessions/<cwd>/*.jsonl` | 会话历史 |
 | `…/models.json` | 模型 / 供应商 |
-| `…/pi-web.json` | 设置（角色、代理、Agent 模式、UI、GPU…） |
+| `…/raincode.json` | 设置（角色、代理、Agent 模式、UI、GPU…） |
 | `…/auth.json` | 供应商凭据 |
 | `…/project-memory/<key>/facts.jsonl` | 项目记忆（启用时） |
 | `…/cache/jiti` | 桌面 runtime 转译缓存 |
@@ -208,7 +208,7 @@ npm run dist:win            # Windows NSIS（x64）
 
 | 环境变量 | 作用 |
 | --- | --- |
-| `PI_CODING_AGENT_DIR` | 智能体数据根（默认 `~/.pi/agent`） |
+| `PI_CODING_AGENT_DIR` | 智能体数据根（默认 `~/.raincode`） |
 | `PI_WEB_RUNTIME_ROLE` | Electron 设置：`light` \| `heavy` |
 | `PI_WEB_PREWARM_DELAY_MS` | heavy 扩展预热前的静默窗口（默认 `2000`） |
 | `PI_WEB_KEEP_NEXT=1` | 打包时在 standalone 中保留 Next server |

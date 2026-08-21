@@ -1,11 +1,11 @@
 /**
  * User/project slash commands: markdown files with `$NAME` placeholders.
- * Reads `~/.pi/agent/commands/*.md` (user) and `<cwd>/.pi/commands/*.md`
- * (project); project commands win on name collisions.
+ * Reads `~/.raincode/commands/*.md` (user) and `<cwd>/.pi/commands/*.md`
+ * (project, SDK convention); project commands win on name collisions.
  */
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { getAgentDir } from "./agent-dir";
 
 export type UserCommandSource = "user" | "project";
 
@@ -74,7 +74,7 @@ function readCommandsFromDir(dir: string, source: UserCommandSource): UserComman
 
 /** Project commands first, then user commands (project wins by name). */
 export function listUserCommands(cwd: string): UserCommand[] {
-  const agentDir = join(homedir(), ".pi/agent");
+  const agentDir = getAgentDir();
   const user = readCommandsFromDir(join(agentDir, "commands"), "user");
   const project = readCommandsFromDir(join(cwd, ".pi/commands"), "project");
   const names = new Set<string>();

@@ -3,6 +3,7 @@
  */
 import { existsSync, statSync } from "fs";
 import { delimiter, join, resolve } from "path";
+import { getAgentDir } from "./agent-dir";
 
 export type LspCatalogEntry = {
   id: string;
@@ -152,9 +153,9 @@ function localBinDirs(cwd?: string | null): string[] {
   } catch {
     // ignore
   }
+  dirs.push(join(getAgentDir(), "bin"));
   const home = process.env.HOME || process.env.USERPROFILE;
   if (home) {
-    dirs.push(join(home, ".pi", "agent", "bin"));
     dirs.push(join(home, ".local", "bin"));
     // rustup default
     dirs.push(join(home, ".cargo", "bin"));

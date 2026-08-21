@@ -45,7 +45,7 @@ Electron desktop · browser UI · [ct-jyjntc/pi-web](https://github.com/ct-jyjnt
 ---
 
 RainCode is a **local-first coding-agent workspace** for your machine.  
-Open a project, chat with the agent, review Git, browse files, and open terminals — as a desktop app or in the browser. There is **no cloud account** for the app itself; data lives under `~/.pi/agent`.
+Open a project, chat with the agent, review Git, browse files, and open terminals — as a desktop app or in the browser. There is **no cloud account** for the app itself; data lives under `~/.raincode`.
 
 | | |
 | :--- | :--- |
@@ -160,10 +160,10 @@ Browser  ──REST + SSE──▶  Next.js (app/ + app/api) on 127.0.0.1:30141
 
 | Path | Role |
 | --- | --- |
-| `~/.pi/agent` | Default data root (`PI_CODING_AGENT_DIR`) |
+| `~/.raincode` | Default data root (`PI_CODING_AGENT_DIR`) |
 | `…/sessions/<cwd>/*.jsonl` | Conversation history |
 | `…/models.json` | Models / providers |
-| `…/pi-web.json` | Settings (roles, proxy, agent mode, UI, GPU, …) |
+| `…/raincode.json` | Settings (roles, proxy, agent mode, UI, GPU, …) |
 | `…/auth.json` | Provider credentials |
 | `…/project-memory/<key>/facts.jsonl` | Project memory (when enabled) |
 | `…/cache/jiti` | Desktop runtime transpile cache |
@@ -208,7 +208,7 @@ npm run dist:win            # Windows NSIS (x64)
 
 | Env | Purpose |
 | --- | --- |
-| `PI_CODING_AGENT_DIR` | Agent data root (default `~/.pi/agent`) |
+| `PI_CODING_AGENT_DIR` | Agent data root (default `~/.raincode`) |
 | `PI_WEB_RUNTIME_ROLE` | Set by Electron: `light` \| `heavy` |
 | `PI_WEB_PREWARM_DELAY_MS` | Quiet period before heavy extension prewarm (default `2000`) |
 | `PI_WEB_KEEP_NEXT=1` | Packaging: keep Next server in standalone tree |

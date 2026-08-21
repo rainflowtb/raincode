@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Built-in (OAuth / API-key) model enable/disable denylist.
- * SDK-free on purpose: only reads/writes ~/.pi/agent/disabled-models.json so
+ * SDK-free on purpose: only reads/writes ~/.raincode/disabled-models.json so
  * toggles stay on the light runtime and feel instant like custom/free models.
  */
 

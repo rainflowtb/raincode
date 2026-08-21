@@ -38,8 +38,13 @@ const nextShim = path.join(__dirname, "shims", "next-server.mjs");
 // node_modules/.cache and falls back to the OS temp dir — in a packaged app the
 // first is read-only under a per-machine install, and the second gets purged by
 // Windows Storage Sense.
-const agentDir =
-  process.env.PI_CODING_AGENT_DIR?.trim() || path.join(os.homedir(), ".pi", "agent");
+// Pin the agent dir for the pi SDK before any route module can load it.
+// RainCode uses ~/.raincode, separate from pi's ~/.pi/agent; an explicitly
+// set PI_CODING_AGENT_DIR still wins.
+if (!process.env.PI_CODING_AGENT_DIR?.trim()) {
+  process.env.PI_CODING_AGENT_DIR = path.join(os.homedir(), ".raincode");
+}
+const agentDir = process.env.PI_CODING_AGENT_DIR.trim();
 const jitiCacheDir = path.join(agentDir, "cache", "jiti");
 try {
   fs.mkdirSync(jitiCacheDir, { recursive: true });

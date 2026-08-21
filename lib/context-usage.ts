@@ -55,7 +55,7 @@ export function buildContextUsageSnapshot(
   };
 }
 
-/** Fast path: read contextWindow from ~/.pi/agent/models.json (no AgentSession). */
+/** Fast path: read contextWindow from ~/.raincode/models.json (no AgentSession). */
 export function resolveContextWindowFromModelsJson(
   model: { provider: string; modelId: string } | null | undefined,
 ): number | null {

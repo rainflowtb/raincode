@@ -1,5 +1,5 @@
 /**
- * Single owner for reading/writing ~/.pi/agent/models.json: atomic file IO,
+ * Single owner for reading/writing ~/.raincode/models.json: atomic file IO,
  * legacy-field stripping, developer-role normalization, and provider-level
  * upsert/delete. Route handlers under app/api/models-config/** call this
  * instead of touching models.json directly.
