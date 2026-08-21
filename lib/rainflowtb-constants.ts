@@ -21,3 +21,9 @@ export const RAINFLOWTB_LOGIN_URL = `${RAINFLOWTB_BASE_URL}/oauth/login`;
 export const RAINFLOWTB_CHECK_URL = `${RAINFLOWTB_BASE_URL}/oauth/check`;
 export const RAINFLOWTB_TOKEN_URL = `${RAINFLOWTB_BASE_URL}/oauth/token`;
 export const RAINFLOWTB_REFRESH_URL = `${RAINFLOWTB_BASE_URL}/oauth/refresh`;
+
+/**
+ * Name shown on the broker's consent page ("X 请求访问你的账号").
+ * Self-declared display string; the broker falls back to "Pi-Web" when absent.
+ */
+export const RAINFLOWTB_CLIENT_NAME = "RainCode";

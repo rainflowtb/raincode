@@ -26,6 +26,7 @@ import {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   RAINFLOWTB_CHECK_URL,
+  RAINFLOWTB_CLIENT_NAME,
   RAINFLOWTB_CODING_BASE_URL,
   RAINFLOWTB_DISPLAY_NAME,
   RAINFLOWTB_LOGIN_URL,
@@ -94,7 +95,7 @@ interface LoginStart {
 }
 
 async function startLogin(): Promise<{ loginUrl: string; state: string }> {
-  const res = await apiFetch(RAINFLOWTB_LOGIN_URL);
+  const res = await apiFetch(`${RAINFLOWTB_LOGIN_URL}?client_name=${encodeURIComponent(RAINFLOWTB_CLIENT_NAME)}`);
   if (!res.ok) throw new Error(`RAINFLOWTB login start failed (HTTP ${res.status})`);
   const data = (await res.json().catch(() => null)) as LoginStart | null;
   const state = asString(data?.state);
