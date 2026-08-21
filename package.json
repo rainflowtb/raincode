@@ -48,6 +48,7 @@
     "dist:dmg": "npm run build:electron && electron-builder --mac dmg",
     "dist:mac": "npm run build:electron && electron-builder --mac dmg zip",
     "dist:win": "npm run build:electron && electron-builder --win nsis",
+    "release:publish": "node scripts/publish-release.mjs",
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public",
     "bundle:sdk": "node scripts/bundle-pi-sdk.mjs",
     "smoke:ipc": "node scripts/smoke-ipc-runtime.mjs",
