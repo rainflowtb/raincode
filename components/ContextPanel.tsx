@@ -1,0 +1,658 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AlignLeft, Check, Copy, FileText, Redo2, RefreshCw, Square, Undo2 } from "lucide-react";
+import { useLocale } from "@/hooks/useLocale";
+import { parseAnsiLine, stripAnsi } from "@/lib/ansi";
+import { copyText } from "@/lib/clipboard";
+import { useSessionMetrics } from "@/lib/session-metrics-store";
+import { getCompactHandlers, requestCompact, subscribeCompactHandlers } from "@/lib/compact-action-store";
+import { requestNavigateToLeaf } from "@/lib/session-nav-store";
+import type { ExtensionStatusItem } from "@/lib/types";
+import { Icon } from "./Icon";
+import { apiFetch } from "@/lib/api-transport";
+
+function isPermissionStatus(status: { key: string; text: string }): boolean {
+  const k = status.key.toLowerCase();
+  const t = status.text.toLowerCase();
+  // Permission mode is already controlled in the composer toolbar.
+  return (
+    k.includes("permission")
+    || k.includes("pi-permission")
+    || k.includes("yolo")
+    || t === "yolo"
+    || t.includes("yolo mode")
+    || t.includes("permission")
+  );
+}
+
+function sanitizeStatusText(text: string): string {
+  return text
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/ +/g, " ")
+    .trim();
+}
+
+function visibleExtensionStatuses(statuses: ExtensionStatusItem[]): ExtensionStatusItem[] {
+  return [...statuses]
+    .filter((status) => !isPermissionStatus(status))
+    .map((status) => ({
+      key: status.key,
+      text: sanitizeStatusText(status.text),
+    }))
+    .filter((status) => status.text.length > 0)
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+type SessionCopyField = "file" | "id";
+
+export function ContextPanel() {
+  const { t } = useLocale();
+  const { contextUsage, sessionStats, extensionStatuses } = useSessionMetrics();
+  const compactState = useSyncExternalStore(
+    subscribeCompactHandlers,
+    getCompactHandlers,
+    () => null,
+  );
+  const [collabBusy, setCollabBusy] = useState(false);
+  const [collabUrl, setCollabUrl] = useState<string | null>(null);
+  const [journal, setJournal] = useState<{
+    canUndo: boolean;
+    canRedo: boolean;
+    undoCount: number;
+    redoCount: number;
+    lastTurn: { fileCount: number } | null;
+  }>({ canUndo: false, canRedo: false, undoCount: 0, redoCount: 0, lastTurn: null });
+  const [journalBusy, setJournalBusy] = useState(false);
+  const [journalMessage, setJournalMessage] = useState<string | null>(null);
+
+  const refreshJournal = useCallback(async (sid: string) => {
+    try {
+      const res = await apiFetch(`/api/workspace-journal?sessionId=${encodeURIComponent(sid)}`);
+      const data = await res.json() as {
+        canUndo?: boolean;
+        canRedo?: boolean;
+        undoCount?: number;
+        redoCount?: number;
+        lastTurn?: { fileCount: number } | null;
+      };
+      if (!res.ok) return;
+      setJournal({
+        canUndo: Boolean(data.canUndo),
+        canRedo: Boolean(data.canRedo),
+        undoCount: data.undoCount ?? 0,
+        redoCount: data.redoCount ?? 0,
+        lastTurn: data.lastTurn ?? null,
+      });
+    } catch {
+      // best-effort
+    }
+  }, []);
+
+  useEffect(() => {
+    const sid = sessionStats?.sessionId;
+    if (!sid) {
+      setJournal({ canUndo: false, canRedo: false, undoCount: 0, redoCount: 0, lastTurn: null });
+      return;
+    }
+    // Re-fetch journal when message/tool counts change — agent turns seal after
+    // toolCalls/totalMessages update, not only when sessionId flips.
+    void refreshJournal(sid);
+  }, [
+    sessionStats?.sessionId,
+    sessionStats?.toolCalls,
+    sessionStats?.toolResults,
+    sessionStats?.totalMessages,
+    sessionStats?.assistantMessages,
+    refreshJournal,
+  ]);
+
+  const runJournalAction = useCallback(async (action: "undo" | "redo") => {
+    const sid = sessionStats?.sessionId;
+    if (!sid) return;
+    setJournalBusy(true);
+    setJournalMessage(null);
+    try {
+      const res = await apiFetch("/api/workspace-journal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid, action }),
+      });
+      const data = await res.json() as {
+        ok?: boolean;
+        error?: string;
+        restored?: string[];
+        userEntryId?: string;
+        status?: typeof journal;
+      };
+      if (data.status) {
+        setJournal({
+          canUndo: Boolean(data.status.canUndo),
+          canRedo: Boolean(data.status.canRedo),
+          undoCount: data.status.undoCount ?? 0,
+          redoCount: data.status.redoCount ?? 0,
+          lastTurn: data.status.lastTurn ?? null,
+        });
+      } else {
+        await refreshJournal(sid);
+      }
+      if (!res.ok || !data.ok) {
+        setJournalMessage(data.error ?? (action === "undo" ? t("shell.undoFailed") : t("shell.redoFailed")));
+        return;
+      }
+      // Rewind chat UI via the active session's navigateToLeaf (loadContext included).
+      // Falls back to server navigate_tree when no chat is registered for this id.
+      if (action === "undo" && data.userEntryId) {
+        try {
+          const navigated = await requestNavigateToLeaf(sid, data.userEntryId);
+          if (!navigated) {
+            await apiFetch(`/api/agent/${encodeURIComponent(sid)}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ type: "navigate_tree", targetId: data.userEntryId }),
+            });
+          }
+        } catch {
+          // File undo already applied; tree rewind is best-effort.
+        }
+      }
+      const n = data.restored?.length ?? 0;
+      setJournalMessage(
+        action === "undo" ? t("shell.undoRestored", { n: String(n) }) : t("shell.redoRestored", { n: String(n) }),
+      );
+    } catch (e) {
+      setJournalMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setJournalBusy(false);
+    }
+  }, [refreshJournal, sessionStats?.sessionId, t]);
+
+  const shareCollab = useCallback(async () => {
+    const sid = sessionStats?.sessionId;
+    if (!sid) return;
+    setCollabBusy(true);
+    try {
+      const res = await apiFetch("/api/collab", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: sid,
+          sessionFile: sessionStats.sessionFile,
+          note: sessionStats.sessionName || "",
+        }),
+      });
+      const data = await res.json() as {
+        error?: string;
+        share?: { token?: string };
+      };
+      if (!res.ok || data.error || !data.share?.token) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const url = `${window.location.origin}/collab/${data.share.token}`;
+      setCollabUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        // ignore clipboard failures
+      }
+    } catch {
+      setCollabUrl(null);
+    } finally {
+      setCollabBusy(false);
+    }
+  }, [sessionStats?.sessionFile, sessionStats?.sessionId, sessionStats?.sessionName]);
+
+
+  const extensionRows = useMemo(
+    () => visibleExtensionStatuses(extensionStatuses),
+    [extensionStatuses],
+  );
+  const [copiedSessionField, setCopiedSessionField] = useState<SessionCopyField | null>(null);
+  const sessionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopySessionField = useCallback((field: SessionCopyField, value: string) => {
+    void copyText(value).then(() => {
+      if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
+      setCopiedSessionField(field);
+      sessionCopyTimerRef.current = setTimeout(() => setCopiedSessionField(null), 1400);
+    });
+  }, []);
+
+  const tokens = sessionStats?.tokens;
+  const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+  const ctx = contextUsage ?? sessionStats?.contextUsage ?? null;
+  let ctxColor = "var(--text-muted)";
+  let ctxPct: number | null = null;
+  if (ctx?.contextWindow) {
+    ctxPct = ctx.percent;
+    if (ctxPct !== null && ctxPct > 90) ctxColor = "var(--destructive)";
+    else if (ctxPct !== null && ctxPct > 70) ctxColor = "var(--text)";
+  }
+
+  const sectionHeader = (title: string) => (
+    <div
+      className="context-panel-section"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        minHeight: 28,
+        padding: "0 12px",
+        /* Sticky header must stay opaque to cover scrolled rows — but use the
+           panel surface color, not a darker fill. No divider lines: level is
+           expressed by indent + label weight only. */
+        background: "var(--bg)",
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        color: "var(--text-dim)",
+        flexShrink: 0,
+      }}
+    >
+      {title}
+    </div>
+  );
+
+  const kvRow = (label: string, value: string, mono = false) => (
+    <div
+      key={`${label}:${value}`}
+      className="context-panel-row"
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+        minHeight: 28,
+        margin: "1px 6px",
+        /* Level-2 rows indent under the level-1 section header. */
+        padding: "4px 8px 4px 20px",
+        borderRadius: "var(--radius-sm)",
+        fontSize: 12,
+      }}
+    >
+      <span style={{ color: "var(--text-dim)", whiteSpace: "nowrap", flexShrink: 0, lineHeight: "20px" }}>{label}</span>
+      <span style={{
+        marginLeft: "auto",
+        color: "var(--text-muted)",
+        textAlign: "right",
+        minWidth: 0,
+        overflowWrap: "anywhere",
+        wordBreak: mono ? "break-all" : "normal",
+        fontFamily: mono ? "var(--font-mono)" : "inherit",
+        fontVariantNumeric: "tabular-nums",
+        lineHeight: "20px",
+      }}>{value}</span>
+    </div>
+  );
+
+  const usageRows: string[][] = [];
+  if (ctx?.contextWindow) {
+    usageRows.push([t("shell.context"), ctxPct !== null ? `${ctxPct.toFixed(1)}%` : t("shell.statUnknown")]);
+    usageRows.push([t("shell.statTokens"), ctx.tokens != null ? `${fmt(ctx.tokens)} / ${fmt(ctx.contextWindow)}` : fmt(ctx.contextWindow)]);
+  }
+  if (tokens) {
+    if (tokens.input > 0) usageRows.push([t("shell.input"), tokens.input.toLocaleString()]);
+    if (tokens.output > 0) usageRows.push([t("shell.output"), tokens.output.toLocaleString()]);
+    if (tokens.cacheRead > 0) usageRows.push([t("shell.cacheRead"), tokens.cacheRead.toLocaleString()]);
+    if (tokens.cacheWrite > 0) usageRows.push([t("shell.cacheWrite"), tokens.cacheWrite.toLocaleString()]);
+    const billed = tokens.input + tokens.cacheRead;
+    if (billed > 0 && tokens.cacheRead > 0) {
+      usageRows.push([t("shell.cacheHit"), `${((tokens.cacheRead / billed) * 100).toFixed(1)}%`]);
+    }
+    if (tokens.total > 0) usageRows.push([t("shell.total"), tokens.total.toLocaleString()]);
+  }
+
+  return (
+    <div
+      className="git-panel context-panel"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        flex: 1,
+        background: "var(--bg)",
+      }}
+    >
+      <div className="git-panel-toolbar">
+        <div className="git-panel-title">
+          <span className="git-panel-title-label">{t("shell.contextTab")}</span>
+          {ctxPct != null && (
+            <span className="git-panel-stats" style={{ color: ctxColor }}>
+              {`${Math.round(ctxPct)}%`}
+            </span>
+          )}
+        </div>
+        <div className="git-panel-toolbar-actions">
+          {compactState && (
+            <button
+              type="button"
+              className={`chrome-btn${compactState.isCompacting ? " is-danger is-active" : ""}`}
+              onClick={() => {
+                if (compactState.isCompacting) {
+                  compactState.abort?.();
+                  return;
+                }
+                requestCompact();
+              }}
+              title={compactState.isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
+              aria-label={compactState.isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
+            >
+              {compactState.isCompacting ? (
+                <>
+                  <Icon icon={Square} size={10} fill="currentColor" strokeWidth={0} />
+                  <span>{t("chat.compacting")}</span>
+                </>
+              ) : (
+                <>
+                  <Icon icon={AlignLeft} size={12} strokeWidth={1.8} />
+                  <span>{t("chat.compact")}</span>
+                </>
+              )}
+            </button>
+          )}
+          {sessionStats?.sessionFile && (
+            <button
+              type="button"
+              className="chrome-btn is-icon"
+              onClick={() => handleCopySessionField("file", sessionStats.sessionFile!)}
+              title={copiedSessionField === "file" ? t("common.copied") : t("shell.copyFilePath")}
+              aria-label={t("shell.copyFilePath")}
+            >
+              {copiedSessionField === "file" ? (
+                <Icon icon={Check} size={13} strokeWidth={2} />
+              ) : (
+                <Icon icon={FileText} size={13} strokeWidth={1.8} />
+              )}
+            </button>
+          )}
+          {sessionStats && (
+            <button
+              type="button"
+              className="chrome-btn is-icon"
+              onClick={() => handleCopySessionField("id", sessionStats.sessionId)}
+              title={copiedSessionField === "id" ? t("common.copied") : t("shell.copySessionId")}
+              aria-label={t("shell.copySessionId")}
+            >
+              {copiedSessionField === "id" ? (
+                <Icon icon={Check} size={13} strokeWidth={2} />
+              ) : (
+                <Icon icon={Copy} size={13} strokeWidth={1.8} />
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {compactState?.error && (
+        <div
+          role="alert"
+          style={{
+            margin: "8px 12px 0",
+            padding: "7px 10px",
+            border: "1px solid var(--destructive-border)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--destructive-bg)",
+            color: "var(--destructive)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            lineHeight: 1.45,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            flexShrink: 0,
+          }}
+        >
+          {compactState.error}
+        </div>
+      )}
+      {compactState?.resultText && !compactState.error && (
+        <div
+          style={{
+            margin: "8px 12px 0",
+            padding: "7px 10px",
+            border: "1px solid var(--success-border)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--success-bg)",
+            color: "var(--success)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            lineHeight: 1.45,
+            flexShrink: 0,
+          }}
+        >
+          {compactState.resultText}
+        </div>
+      )}
+
+      {ctx?.contextWindow && (
+        <div
+          className="git-panel-subheader"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            minHeight: 32,
+            height: 32,
+            padding: "0 12px",
+            background: "var(--bg)",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            aria-hidden
+            style={{
+              flex: 1,
+              height: 4,
+              borderRadius: "var(--radius-pill)",
+              background: "var(--bg-subtle)",
+              border: "1px solid var(--border)",
+              overflow: "hidden",
+              minWidth: 0,
+            }}
+          >
+            <div style={{
+              height: "100%",
+              width: `${Math.min(100, Math.max(0, ctxPct ?? 0))}%`,
+              background: ctxColor === "var(--destructive)" ? "var(--destructive)" : "var(--accent)",
+              opacity: 0.85,
+            }} />
+          </div>
+          <span style={{
+            fontSize: 11,
+            fontVariantNumeric: "tabular-nums",
+            color: ctxColor,
+            flexShrink: 0,
+            fontFamily: "var(--font-mono)",
+          }}>
+            {ctx.tokens != null
+              ? `${fmt(ctx.tokens)} / ${fmt(ctx.contextWindow)}`
+              : (ctxPct !== null ? `${ctxPct.toFixed(0)}%` : fmt(ctx.contextWindow))}
+          </span>
+        </div>
+      )}
+
+      <div className="git-panel-body" data-overlay-scroll style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {!sessionStats && !ctx?.contextWindow && extensionRows.length === 0 ? (
+          <div style={{
+            padding: "24px 12px",
+            textAlign: "center",
+            color: "var(--text-dim)",
+            fontSize: 12,
+          }}>
+            {t("shell.sessionInfoEmpty")}
+          </div>
+        ) : (
+          <>
+            {usageRows.length > 0 && (
+              <>
+                {sectionHeader(t("shell.contextUsage"))}
+                {usageRows.map(([label, value]) => kvRow(label, value))}
+              </>
+            )}
+
+            {extensionRows.length > 0 && (
+              <>
+                {sectionHeader(t("shell.extensionStatus"))}
+                {extensionRows.map((status) => {
+                  const plain = stripAnsi(status.text);
+                  const segments = parseAnsiLine(status.text);
+                  return (
+                    <div
+                      key={status.key}
+                      className="context-panel-row"
+                      title={`${status.key}: ${plain}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 12,
+                        minHeight: 32,
+                        padding: "6px 12px",
+                        fontSize: 12,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: "var(--text-muted)",
+                          flexShrink: 0,
+                          width: 88,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          lineHeight: "20px",
+                        }}
+                      >
+                        {status.key}
+                      </span>
+                      <span
+                        style={{
+                          color: "var(--text)",
+                          minWidth: 0,
+                          flex: 1,
+                          overflowWrap: "anywhere",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: 11,
+                          lineHeight: "18px",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {segments.length > 0
+                          ? segments.map((segment, index) => (
+                            <span key={index} style={segment.style}>{segment.text}</span>
+                          ))
+                          : plain}
+                      </span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+
+            {sessionStats && (
+              <>
+                {sectionHeader(t("shell.sessionInfoTitle"))}
+                {sessionStats.sessionName && kvRow(t("shell.name"), sessionStats.sessionName)}
+                {kvRow(t("shell.file"), sessionStats.sessionFile ?? t("shell.inMemory"), true)}
+                {kvRow(t("shell.id"), sessionStats.sessionId, true)}
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    padding: "8px 12px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn-ghost btn-compact"
+                    disabled={collabBusy}
+                    onClick={() => void shareCollab()}
+                    style={{ alignSelf: "flex-start" }}
+                  >
+                    {collabBusy ? t("common.loading") : t("collab.share")}
+                  </button>
+                  {collabUrl && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all", fontFamily: "var(--font-mono)" }}>
+                      {t("collab.linkCopied")}:{" "}
+                      <a href={collabUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                        {collabUrl}
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {sectionHeader(t("shell.messages"))}
+                {kvRow(t("shell.user"), sessionStats.userMessages.toLocaleString())}
+                {kvRow(t("shell.assistant"), sessionStats.assistantMessages.toLocaleString())}
+                {kvRow(t("shell.toolCalls"), sessionStats.toolCalls.toLocaleString())}
+                {kvRow(t("shell.toolResults"), sessionStats.toolResults.toLocaleString())}
+                {kvRow(t("shell.total"), sessionStats.totalMessages.toLocaleString())}
+
+                {sectionHeader(t("shell.workspaceUndo"))}
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>
+                    {t("shell.workspaceUndoDesc")}
+                  </div>
+                  {!journal.canUndo && !journal.canRedo ? (
+                    <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("shell.workspaceUndoEmpty")}</div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                      undo×{journal.undoCount}
+                      {journal.lastTurn ? ` · last ${journal.lastTurn.fileCount} file(s)` : ""}
+                      {journal.canRedo ? ` · redo×${journal.redoCount}` : ""}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-compact"
+                      disabled={journalBusy || !journal.canUndo}
+                      onClick={() => void runJournalAction("undo")}
+                      title="/undo"
+                    >
+                      <Icon icon={Undo2} size="sm" />
+                      {t("shell.undo")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-compact"
+                      disabled={journalBusy || !journal.canRedo}
+                      onClick={() => void runJournalAction("redo")}
+                      title="/redo"
+                    >
+                      <Icon icon={Redo2} size="sm" />
+                      {t("shell.redo")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-compact"
+                      disabled={journalBusy || !sessionStats?.sessionId}
+                      onClick={() => {
+                        const sid = sessionStats?.sessionId;
+                        if (sid) void refreshJournal(sid);
+                      }}
+                      title={t("shell.workspaceUndoRefresh")}
+                    >
+                      <Icon icon={RefreshCw} size="sm" />
+                      {t("shell.workspaceUndoRefresh")}
+                    </button>
+                  </div>
+                  {journalMessage && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{journalMessage}</div>
+                  )}
+                </div>
+
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

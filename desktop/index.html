@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en" translate="no" class="notranslate">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="google" content="notranslate" />
+    <title>RainCode</title>
+    <style>
+      :root {
+        --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+      }
+      html, body { height: 100%; margin: 0; }
+      body {
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        font-family: var(--font-sans);
+        background: #fbfbfb;
+        color: #1a1a18;
+      }
+      html.dark body { background: #232323; color: #e8e8e6; }
+    </style>
+    <script>
+      (function () {
+        try {
+          // One-time rebrand migration: legacy pi-* keys -> raincode-* (mirrors lib/storage-migration.ts).
+          var M=[["pi-theme-mode","raincode-theme-mode"],["pi-theme","raincode-theme"],["pi-appearance","raincode-appearance"],["pi-locale","raincode-locale"],["pi-sound-enabled","raincode-sound-enabled"],["pi-terminal-font","raincode-terminal-font"],["pi-explorer-open","raincode-explorer-open"],["pi-right-panel-width","raincode-right-panel-width"],["pi-sidebar-width","raincode-sidebar-width"],["pi-web:unread-session-ids","raincode:unread-session-ids"],["pi-web-ext-widget-open","raincode-ext-widget-open"]];
+          for (var i = 0; i < M.length; i++) {
+            var v0 = localStorage.getItem(M[i][0]);
+            if (v0 !== null) {
+              if (localStorage.getItem(M[i][1]) === null) localStorage.setItem(M[i][1], v0);
+              localStorage.removeItem(M[i][0]);
+            }
+          }
+          var m = localStorage.getItem("raincode-theme-mode");
+          var t = localStorage.getItem("raincode-theme");
+          var dark = false;
+          if (m === "dark" || t === "dark") dark = true;
+          else if (m === "light" || t === "light") dark = false;
+          else dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+          var a = localStorage.getItem("raincode-appearance");
+          if (a) {
+            try {
+              var p = JSON.parse(a);
+              if (p && p.uiFontSize) document.documentElement.style.setProperty("--ui-font-size", p.uiFontSize + "px");
+            } catch (_) {}
+          }
+          var l = localStorage.getItem("raincode-locale");
+          if (l === "zh" || l === "en") document.documentElement.lang = l;
+          else {
+            var n = (navigator.language || "").toLowerCase();
+            document.documentElement.lang = n.indexOf("zh") === 0 ? "zh" : "en";
+          }
+          if (window.raincodeDesktop && window.raincodeDesktop.isDesktop) {
+            var r = document.documentElement;
+            r.classList.add("raincode-desktop");
+            var plat = window.raincodeDesktop.platform;
+            if (plat === "darwin") r.classList.add("raincode-desktop-mac");
+            else if (plat === "win32") r.classList.add("raincode-desktop-win");
+            else if (plat === "linux") r.classList.add("raincode-desktop-linux");
+            if (typeof window.raincodeDesktop.setTheme === "function") {
+              window.raincodeDesktop.setTheme(r.classList.contains("dark") ? "dark" : "light");
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body translate="no" class="notranslate">
+    <div id="root" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

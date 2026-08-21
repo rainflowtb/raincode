@@ -1,0 +1,47 @@
+/**
+ * Terminal workspace tab model and pure label renumbering.
+ */
+
+export type TerminalSessionTab = {
+  id: string;
+  label: string;
+  source: "user" | "agent";
+  attachSessionId?: string;
+  command?: string;
+  /** Workspace cwd where this terminal was opened — UI filters by top-left workspace. */
+  cwd?: string | null;
+};
+
+export function renumberTerminalLabels(
+  tabs: TerminalSessionTab[],
+  t: (key: string, params?: Record<string, string | number>) => string,
+): TerminalSessionTab[] {
+  let userIndex = 0;
+  return tabs.map((tab) => {
+    if (tab.source === "agent") {
+      const cmd = tab.command?.replace(/\s+/g, " ").trim();
+      const short = cmd && cmd.length > 28 ? `${cmd.slice(0, 25)}…` : cmd;
+      return {
+        ...tab,
+        label: short ? `${t("git.terminalAgent")} · ${short}` : t("git.terminalAgent"),
+      };
+    }
+    userIndex += 1;
+    return { ...tab, label: `${t("git.terminal")} ${userIndex}` };
+  });
+}
+
+export type WorkspaceTab =
+  | { id: "review"; kind: "review" }
+  | { id: "history"; kind: "history" }
+  | { id: "explorer"; kind: "explorer" }
+  | { id: "context"; kind: "context" }
+  | { id: "terminal"; kind: "terminal" };
+
+export const WORKSPACE_TABS: WorkspaceTab[] = [
+  { id: "review", kind: "review" },
+  { id: "history", kind: "history" },
+  { id: "explorer", kind: "explorer" },
+  { id: "context", kind: "context" },
+  { id: "terminal", kind: "terminal" },
+];

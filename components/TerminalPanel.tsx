@@ -1,0 +1,385 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { useLocale } from "@/hooks/useLocale";
+import { ensureWebSettings } from "@/lib/web-settings-store";
+import { apiFetch, apiStream, type ApiStream } from "@/lib/api-transport";
+// xterm.css is vendored into app/globals.css — avoid PostCSS/lightningcss on the package CSS.
+
+interface Props {
+  cwd: string | null;
+  /** Attach to an existing server PTY (e.g. AI-started bash). When set, does not create a new shell. */
+  attachSessionId?: string | null;
+  /** When true, closing/unmounting does not kill the remote PTY (used while keeping hidden mounts). Default kill on unmount. */
+  persistRemoteOnUnmount?: boolean;
+  sourceLabel?: string | null;
+}
+
+type ThemeVars = {
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent: string;
+  selectionBackground: string;
+  selectionInactiveBackground: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+};
+
+function resolveCssColor(host: HTMLElement, value: string): string {
+  const probe = document.createElement("span");
+  probe.style.color = value;
+  host.appendChild(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color || value;
+}
+
+function readTerminalTheme(host: HTMLElement): ThemeVars {
+  const color = (value: string) => resolveCssColor(host, value);
+  return {
+    background: color("var(--bg)"),
+    foreground: color("var(--text)"),
+    cursor: color("var(--text)"),
+    cursorAccent: color("var(--bg)"),
+    selectionBackground: color("color-mix(in oklab, var(--text) 18%, transparent)"),
+    selectionInactiveBackground: color("color-mix(in oklab, var(--text) 10%, transparent)"),
+    black: color("color-mix(in oklab, var(--text) 32%, var(--bg))"),
+    red: color("var(--destructive)"),
+    green: color("var(--success)"),
+    yellow: color("var(--text-muted)"),
+    blue: color("var(--text)"),
+    magenta: color("var(--text-muted)"),
+    cyan: color("var(--text-muted)"),
+    white: color("var(--text)"),
+    brightBlack: color("var(--text-dim)"),
+    brightRed: color("var(--destructive)"),
+    brightGreen: color("var(--success)"),
+    brightYellow: color("var(--text)"),
+    brightBlue: color("var(--text)"),
+    brightMagenta: color("var(--text-muted)"),
+    brightCyan: color("var(--text-muted)"),
+    brightWhite: color("var(--text)"),
+  };
+}
+
+function resolveTerminalFont(host: HTMLElement, override?: string | null): string {
+  const fallback = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+  if (override?.trim()) return `${override.trim()}, ${fallback}`;
+  const probe = document.createElement("span");
+  probe.style.fontFamily = "var(--font-mono)";
+  host.appendChild(probe);
+  const resolved = getComputedStyle(probe).fontFamily;
+  probe.remove();
+  return resolved || fallback;
+}
+
+export function TerminalPanel({
+  cwd,
+  attachSessionId = null,
+  persistRemoteOnUnmount = false,
+  sourceLabel = null,
+}: Props) {
+  const { t } = useLocale();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const esRef = useRef<ApiStream | null>(null);
+  const disposedRef = useRef(false);
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  useEffect(() => {
+    disposedRef.current = false;
+    const host = hostRef.current;
+    if (!host) return;
+
+    if (!cwd && !attachSessionId) {
+      setError(null);
+      setBanner(null);
+      setStatus(t("git.terminalNoCwd"));
+      return;
+    }
+
+    setError(null);
+    setBanner(null);
+    setStatus(t("git.terminalConnecting"));
+
+    const theme = readTerminalTheme(host);
+    let cachedOverride: string | null = null;
+    try {
+      cachedOverride = typeof window !== "undefined" ? localStorage.getItem("raincode-terminal-font") : null;
+    } catch {
+      cachedOverride = null;
+    }
+    const term = new Terminal({
+      cursorBlink: true,
+      cursorStyle: "bar",
+      fontSize: 12.5,
+      lineHeight: 1.28,
+      fontFamily: resolveTerminalFont(host, cachedOverride),
+      scrollback: 5000,
+      convertEol: false,
+      allowTransparency: true,
+      theme,
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon());
+    term.open(host);
+    fit.fit();
+    term.focus();
+
+    termRef.current = term;
+    fitRef.current = fit;
+
+    // Follow app theme flips: the `dark` class on <html> re-keys every CSS
+    // var, so re-read and re-apply the xterm theme (otherwise a terminal
+    // opened in light mode keeps a white canvas in dark mode).
+    const themeObserver = new MutationObserver(() => {
+      if (disposedRef.current) return;
+      term.options.theme = readTerminalTheme(host);
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
+    let es: ApiStream | null = null;
+    let sessionId: string | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    // Attached agent sessions are owned by AppShell tab close — never kill on remount.
+    let killOnDispose = attachSessionId ? false : !persistRemoteOnUnmount;
+    let cleanExit = false;
+
+    const queueWrite = (data: string) => {
+      if (!sessionId || cleanExit) return;
+      writeQueueRef.current = writeQueueRef.current
+        .then(async () => {
+          if (disposedRef.current || !sessionId || cleanExit) return;
+          await apiFetch(`/api/cwd/pty/${sessionId}/input`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data }),
+            keepalive: true,
+          });
+        })
+        .catch(() => {
+          // ignore transient write failures
+        });
+    };
+
+    const sendResize = () => {
+      if (!sessionId || cleanExit || !fitRef.current || !termRef.current) return;
+      const el = hostRef.current;
+      // Collapsed / display:none hosts report ~0 size. Fitting that shrinks
+      // the PTY to 2 columns and wraps the prompt; skip until visible again.
+      if (!el || el.clientWidth < 80 || el.clientHeight < 48) return;
+      try {
+        fitRef.current.fit();
+      } catch {
+        return;
+      }
+      const cols = termRef.current.cols;
+      const rows = termRef.current.rows;
+      if (cols < 20 || rows < 5) return;
+      void apiFetch(`/api/cwd/pty/${sessionId}/resize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cols, rows }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+
+    const disposeRemote = (forceKill = false) => {
+      // Clear ids first so EventSource onerror after close is not treated as a fault.
+      const id = sessionId;
+      sessionId = null;
+      sessionIdRef.current = null;
+      if (es) {
+        es.close();
+        es = null;
+        esRef.current = null;
+      }
+      if (id && (forceKill || killOnDispose)) {
+        void apiFetch(`/api/cwd/pty/${id}`, { method: "DELETE", keepalive: true }).catch(() => {});
+      }
+    };
+
+    const attachToSession = (id: string, meta?: { shell?: string; cwd?: string; command?: string }) => {
+      sessionId = id;
+      sessionIdRef.current = id;
+      cleanExit = false;
+      setStatus(null);
+      setError(null);
+      setBanner(
+        sourceLabel
+          || (meta?.command ? `${t("git.terminalAgent")} · ${meta.command}` : null)
+          || `${meta?.shell ?? "shell"} · ${meta?.cwd ?? cwd ?? ""}`,
+      );
+
+      es = apiStream(`/api/cwd/pty/${id}/events`);
+      esRef.current = es;
+
+      es.addEventListener("data", (evt) => {
+        try {
+          const payload = JSON.parse((evt as MessageEvent).data) as { data?: string };
+          if (payload.data) term.write(payload.data);
+        } catch {
+          // ignore
+        }
+      });
+      es.addEventListener("exit", (evt) => {
+        cleanExit = true;
+        killOnDispose = false;
+        try {
+          const payload = JSON.parse((evt as MessageEvent).data) as { exitCode?: number };
+          term.writeln("");
+          term.writeln(`\x1b[90m[process exited: ${payload.exitCode ?? 0}]\x1b[0m`);
+        } catch {
+          term.writeln("\r\n\x1b[90m[process exited]\x1b[0m");
+        }
+        setStatus(t("git.terminalExited"));
+        disposeRemote(false);
+      });
+      es.addEventListener("error", (evt) => {
+        const msgEvt = evt as MessageEvent;
+        if (typeof msgEvt.data === "string" && msgEvt.data) {
+          try {
+            const payload = JSON.parse(msgEvt.data) as { error?: string };
+            if (payload.error) {
+              setError(payload.error);
+              term.writeln(`\r\n\x1b[31m${payload.error}\x1b[0m`);
+            }
+          } catch {
+            // ignore
+          }
+        }
+      });
+      es.onerror = () => {
+        if (disposedRef.current || cleanExit) return;
+        // ReadyState CLOSED after intentional dispose is not a fault.
+        if (!sessionIdRef.current) return;
+        if (es && es.readyState === EventSource.CLOSED) {
+          setStatus(t("git.terminalDisconnected"));
+        }
+      };
+
+      term.onData((data) => queueWrite(data));
+      resizeObserver = new ResizeObserver(() => {
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(sendResize, 50);
+      });
+      resizeObserver.observe(host);
+      requestAnimationFrame(sendResize);
+    };
+
+    const start = async () => {
+      try {
+        fit.fit();
+        if (attachSessionId) {
+          // Late attach: history is replayed by the server subscribe handler.
+          attachToSession(attachSessionId);
+          return;
+        }
+        if (!cwd) throw new Error(t("git.terminalNoCwd"));
+        const cols = Math.max(term.cols || 80, 40);
+        const rows = Math.max(term.rows || 24, 12);
+        const res = await apiFetch("/api/cwd/pty", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd, cols, rows, source: "user" }),
+        });
+        const data = await res.json() as {
+          id?: string;
+          shell?: string;
+          cwd?: string;
+          error?: string;
+        };
+        if (!res.ok || !data.id) {
+          throw new Error(data.error ?? `HTTP ${res.status}`);
+        }
+        if (disposedRef.current) {
+          void apiFetch(`/api/cwd/pty/${data.id}`, { method: "DELETE", keepalive: true }).catch(() => {});
+          return;
+        }
+        attachToSession(data.id, { shell: data.shell, cwd: data.cwd });
+      } catch (e) {
+        if (disposedRef.current) return;
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message);
+        setStatus(null);
+        term.writeln(`\x1b[31m${message}\x1b[0m`);
+      }
+    };
+
+    void start();
+
+    // Apply terminal font from web-settings when available.
+    void ensureWebSettings()
+      .then((settings) => {
+        const font = settings?.terminalFont?.trim();
+        if (!font || disposedRef.current || !termRef.current) return;
+        try {
+          localStorage.setItem("raincode-terminal-font", font);
+        } catch {
+          // ignore
+        }
+        termRef.current.options.fontFamily = resolveTerminalFont(host, font);
+        try {
+          fitRef.current?.fit();
+        } catch {
+          // ignore
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      disposedRef.current = true;
+      themeObserver.disconnect();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeObserver?.disconnect();
+      disposeRemote(false);
+      try {
+        term.dispose();
+      } catch {
+        // ignore
+      }
+      termRef.current = null;
+      fitRef.current = null;
+    };
+  }, [cwd, attachSessionId, persistRemoteOnUnmount, sourceLabel, t]);
+
+  return (
+    <div className="terminal-panel">
+      {(error || status || banner) && (
+        <div className={`terminal-status${error ? " is-error" : ""}`}>
+          {error || status || banner}
+        </div>
+      )}
+      <div
+        ref={hostRef}
+        className="terminal-xterm-host"
+        onClick={() => termRef.current?.focus()}
+      />
+    </div>
+  );
+}

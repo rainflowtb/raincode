@@ -1,0 +1,227 @@
+/**
+ * Create or reuse an in-process AgentSession wrapper for a session id.
+ * Tool assembly + system-prompt extras (memory / lean) live here only.
+ */
+
+import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createRainCodeCustomTools } from "./raincode-custom-tools";
+import { buildMemoryInjectBlock } from "./project-memory";
+import { buildCapabilityBrief } from "./capability-brief";
+import { buildLeanPolicyText } from "./lean-policy";
+import { resolveLeanMode } from "./lean-settings";
+import { createConfiguredModelRuntime } from "./model-runtime";
+import { existsSync } from "fs";
+import { cacheSessionPath, isSubagentChildSessionFile } from "./session-reader";
+import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
+import { getBuiltinResourceLoaderOptions } from "./builtin-extensions";
+import { ensureSubagentSpawnEnv } from "./resolve-pi-cli";
+import { ensureBuiltinPackages, migrateBuiltinPackageSettings } from "./ensure-builtin-packages";
+import { ensureSubagentDelegation } from "./ensure-subagent-delegation";
+import { AgentSessionWrapper } from "./rpc-session-wrapper";
+import {
+  getLocks,
+  getRegistry,
+  getRpcSession,
+  getStartingSessionCwds,
+  normalizeRpcCwd,
+} from "./rpc-registry";
+import { resolveToolAdoption } from "./rpc-session-tool-adoption";
+import { applyRepairToMessages, shouldRepairOnOpen } from "./session-tool-repair";
+import type { AgentMessage } from "./types";
+
+/**
+ * One-shot env / package migration / prewarm. Used to live as rpc-manager.ts
+ * top-level imports so any getRpcSession import paid ~seconds of ensureBuiltinPackages.
+ * Deferred boot also runs these; this gate keeps startRpcSession self-contained
+ * if deferred boot has not finished yet.
+ */
+let rpcRuntimeBooted = false;
+function ensureRpcRuntimeBoot(): void {
+  if (rpcRuntimeBooted) return;
+  rpcRuntimeBooted = true;
+  ensureSubagentSpawnEnv();
+  ensureSubagentDelegation();
+  for (const note of migrateBuiltinPackageSettings()) console.log(`[raincode] ${note}`);
+  void ensureBuiltinPackages();
+}
+
+/**
+ * Get or create an AgentSession for the given session.
+ * For new sessions (sessionFile === ""), pi generates its own id.
+ * Pass toolNames to pre-configure active tools (empty array = all tools disabled).
+ */
+export async function startRpcSession(
+  sessionId: string,
+  sessionFile: string,
+  cwd: string,
+  toolNames?: string[]
+): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
+  ensureRpcRuntimeBoot();
+
+  const registry = getRegistry();
+  const locks = getLocks();
+
+  const existing = registry.get(sessionId);
+  if (existing?.isAlive()) return { session: existing, realSessionId: existing.sessionId || sessionId };
+
+  const inflight = locks.get(sessionId);
+  if (inflight) return inflight;
+
+  // Refuse to open a missing session file: SessionManager.open() would silently
+  // newSession() with a different id, desyncing the client and registry.
+  if (sessionFile && !existsSync(sessionFile)) {
+    throw new Error(`Session file not found: ${sessionFile}`);
+  }
+  if (sessionFile && isSubagentChildSessionFile(sessionFile)) {
+    throw new Error("Child subagent sessions are opened via the parent host, not startRpcSession");
+  }
+
+  const starting = (async () => {
+    // Some extensions access the SDK's global theme even outside the terminal UI.
+    initTheme();
+    const agentDir = getAgentDir();
+    const startingCwds = getStartingSessionCwds();
+    const normalizedCwd = normalizeRpcCwd(cwd);
+    startingCwds.set(normalizedCwd, (startingCwds.get(normalizedCwd) ?? 0) + 1);
+
+    let wrapper: AgentSessionWrapper | null = null;
+    try {
+    const sessionManager = sessionFile
+      ? SessionManager.open(sessionFile, undefined)
+      : SessionManager.create(cwd, undefined);
+
+    if (shouldRepairOnOpen({ alive: Boolean(getRpcSession(sessionId)?.isAlive()) })) {
+      const msgs = sessionManager.buildSessionContext().messages as AgentMessage[];
+      const { persist } = applyRepairToMessages(msgs);
+      for (const closer of persist) {
+        sessionManager.appendMessage(closer as Parameters<SessionManager["appendMessage"]>[0]);
+      }
+    }
+
+    // Determine which tools to pass based on requested toolNames.
+    // Since v0.68.0, session creation expects string[] tool names instead of Tool[] instances.
+    let toolsOption: string[] | undefined;
+    if (toolNames !== undefined) {
+      // toolNames === [] -> "all off" (an empty allow-list disables every tool).
+      // Otherwise DO NOT pass a builtin-only allow-list: passing CODING_TOOL_NAMES
+      // set allowedToolNames to coding builtins only, which filtered every
+      // extension/package-provided tool (e.g. subagents, web access) out of the
+      // tool registry — so they were unavailable in RainCode sessions even though the
+      // `pi` CLI keeps them. Leaving the allow-list unset lets the SDK register all
+      // tools (and activate extension tools); we narrow the ACTIVE set below.
+      toolsOption = toolNames.length === 0 ? [] : undefined;
+    }
+
+    // Build services first so extension-registered providers are available
+    // before the SDK restores the saved model from the session file.
+    // Gate untrusted project extensions so opening a repository does not run
+    // its .pi/extensions code automatically (see lib/project-trust.ts).
+    const trustReloadOptions = projectTrustReloadOptions(cwd, agentDir);
+    const toolsFullyDisabled = toolNames?.length === 0;
+    const capabilityBlock = !toolsFullyDisabled ? buildCapabilityBrief() : null;
+    const memoryBlock = !toolsFullyDisabled ? buildMemoryInjectBlock(cwd) : null;
+    // Lean Mode: portable anti-bloat policy (opt-in). Same appendSystemPromptOverride
+    // as memory / capability — do not add a second inject path.
+    const lean = !toolsFullyDisabled ? resolveLeanMode() : null;
+    const leanBlock = lean?.enabled ? buildLeanPolicyText(lean.intensity) : null;
+    const systemPromptExtras = [capabilityBlock, memoryBlock, leanBlock].filter(
+      (block): block is string => Boolean(block),
+    );
+    const modelRuntime = await createConfiguredModelRuntime();
+    const builtinLoader = getBuiltinResourceLoaderOptions();
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir,
+      modelRuntime,
+      ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
+      resourceLoaderOptions: {
+        ...builtinLoader,
+        ...(systemPromptExtras.length > 0
+          ? { appendSystemPromptOverride: (base: string[]) => [...base, ...systemPromptExtras] }
+          : {}),
+      },
+    });
+    // RainCode bash tool: explicit `background` param + foreground guardrails;
+    // background services run in a real PTY mirrored in the Terminal workspace
+    // so the user can watch, type, or stop them.
+    const getSessionId = (): string | undefined => {
+      try {
+        return sessionManager.getSessionId();
+      } catch {
+        return undefined;
+      }
+    };
+    const customTools = createRainCodeCustomTools({
+      cwd,
+      getSessionId,
+      extras: !toolsFullyDisabled,
+    });
+    const { session: inner } = await createAgentSessionFromServices({
+      services,
+      sessionManager,
+      customTools: customTools as never[],
+      ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
+    });
+
+    wrapper = new AgentSessionWrapper(inner, cwd);
+    // Omitted toolNames (resume / reconnect) still adopts the full coding list so
+    // wrapper.mode can strip edit/write in plan without waiting for client set_tools.
+    // [] stays all-off. Explicit names are adopted as given. Never pass a non-empty
+    // allow-list into createAgentSessionFromServices — that drops extension tools.
+    const adoption = resolveToolAdoption(toolNames);
+    if (adoption.kind === "all-off") {
+      wrapper.setForceEmptySystemPrompt(true);
+    } else {
+      wrapper.adoptBaseToolNames(adoption.names);
+    }
+    try {
+      const status = getProjectTrustStatus(cwd, agentDir);
+      inner.settingsManager.setProjectTrusted?.(status.trusted);
+    } catch {
+      // ignore missing setProjectTrusted
+    }
+    wrapper.start();
+
+    const realSessionId = inner.sessionId as string;
+    const realSessionFile = inner.sessionFile as string | undefined;
+    // Flush header (+ any early entries) so idle destroy / server restart can
+    // reopen this id instead of minting a new one for the same path.
+    wrapper.ensureSessionPersisted();
+    if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
+
+    // Replace any live wrapper already registered under the real id without
+    // leaking its timers/subscriptions (e.g. concurrent start under alias keys).
+    const previous = registry.get(realSessionId);
+    if (previous && previous !== wrapper && previous.isAlive()) {
+      previous.destroy();
+    }
+
+    wrapper.onDestroy(() => {
+      if (registry.get(realSessionId) === wrapper) registry.delete(realSessionId);
+      // Drop request-id alias if we registered one.
+      if (sessionId !== realSessionId && registry.get(sessionId) === wrapper) {
+        registry.delete(sessionId);
+      }
+    });
+    registry.set(realSessionId, wrapper);
+    // When the caller keyed the start lock by a non-temp id that differs from
+    // the file header id (should be rare after persist), alias for lookups.
+    if (sessionId && sessionId !== realSessionId && !sessionId.startsWith("__new__")) {
+      registry.set(sessionId, wrapper);
+    }
+    wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
+
+    return { session: wrapper, realSessionId };
+    } catch (error) {
+      try { wrapper?.destroy(); } catch { /* ignore */ }
+      throw error;
+    } finally {
+      const count = (startingCwds.get(normalizedCwd) ?? 1) - 1;
+      if (count <= 0) startingCwds.delete(normalizedCwd);
+      else startingCwds.set(normalizedCwd, count);
+    }
+  })().finally(() => locks.delete(sessionId));
+
+  locks.set(sessionId, starting);
+  return starting;
+}
