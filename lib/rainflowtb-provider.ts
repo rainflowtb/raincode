@@ -35,6 +35,7 @@ import {
   RAINFLOWTB_TOKEN_URL,
   RAINFLOWTB_WALLET_BASE_URL,
 } from "./rainflowtb-constants";
+import { rainflowtbProofHeaders } from "./rainflowtb-proof";
 export {
   RAINFLOWTB_PROVIDER_ID,
   RAINFLOWTB_DISPLAY_NAME,
@@ -207,6 +208,8 @@ const rainflowtbOAuth: OAuthAuth = {
     return {
       apiKey: credential.access,
       baseUrl: channelBaseUrl(credential.channel as Channel | undefined),
+      // Official-client proof; the site gates zero-priced models on it.
+      headers: rainflowtbProofHeaders(),
     };
   },
 };
@@ -292,7 +295,7 @@ async function fetchRainflowtbModels(context: RefreshModelsContext): Promise<rea
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
     const res = await apiFetch(`${baseUrl}/models`, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}`, ...rainflowtbProofHeaders() },
       signal: controller.signal,
     });
     if (res.status === 402) {
