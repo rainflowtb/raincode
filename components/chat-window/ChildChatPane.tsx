@@ -109,6 +109,7 @@ export function ChildChatPane({
                       width: 28,
                       height: 28,
                       minWidth: 28,
+                      minHeight: 28,
                       border: "1px solid var(--border)",
                       borderRadius: "50%",
                       background: "var(--bg)",
