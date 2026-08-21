@@ -31,9 +31,21 @@ import { spawnSync } from "child_process";
 
 const root = process.cwd();
 const standalone = join(root, ".next", "standalone");
-const isWin = process.platform === "win32";
-const isMac = process.platform === "darwin";
-const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x64" : process.arch;
+
+// Target platform/arch for the bundled node binary. Defaults to the host so
+// existing macOS builds keep working unchanged. Set RAINCODE_TARGET to cross-
+// build, e.g. `win-x64`, `win-arm64`, `darwin-x64`, `darwin-arm64`.
+const target = (process.env.RAINCODE_TARGET || `${process.platform}-${process.arch}`).toLowerCase();
+const m = target.match(/^(darwin|win32|linux)-(arm64|x64|armv7l)$/);
+if (!m) {
+  console.error(`Invalid RAINCODE_TARGET="${target}" — expected <darwin|win32|linux>-<arm64|x64|armv7l>`);
+  process.exit(1);
+}
+const targetPlatform = m[1];
+const arch = m[2];
+const isWin = targetPlatform === "win32";
+const isMac = targetPlatform === "darwin";
+const crossBuild = targetPlatform !== process.platform;  // target ≠ host
 const outDir = join(standalone, "bin");
 const outNode = join(outDir, isWin ? "node.exe" : "node");
 const nodeVersion = process.versions.node;
@@ -103,17 +115,25 @@ async function installOfficialNodeDist() {
     rmSync(extractRoot, { recursive: true, force: true });
     ensureDir(extractRoot);
     if (isWin) {
-      // Prefer system unzip if available; otherwise fail to fallback path.
-      const unzip = run("powershell", [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Path '${archive.replace(/'/g, "''")}' -DestinationPath '${cache.replace(/'/g, "''")}' -Force`,
-      ]);
-      if (unzip.status !== 0) {
-        throw new Error(unzip.stderr || "Failed to unzip Node dist");
+      // Windows target: unzip. On a Windows host use PowerShell Expand-Archive;
+      // on macOS/Linux hosts fall back to the system `unzip` (shipped with macOS).
+      if (process.platform === "win32") {
+        const unzip = run("powershell", [
+          "-NoProfile",
+          "-Command",
+          `Expand-Archive -Path '${archive.replace(/'/g, "''")}' -DestinationPath '${cache.replace(/'/g, "''")}' -Force`,
+        ]);
+        if (unzip.status !== 0) {
+          throw new Error(unzip.stderr || "Failed to unzip Node dist");
+        }
+      } else {
+        const unzip = run("unzip", ["-q", "-o", archive, "-d", cache]);
+        if (unzip.status !== 0) {
+          throw new Error(unzip.stderr || unzip.stdout || "Failed to unzip Node dist (install unzip?)");
+        }
       }
     } else {
-      // Use system tar — always available on macOS/Linux.
+      // macOS/Linux target: tar.gz — system tar is always available.
       const tar = run("tar", ["-xzf", archive, "-C", cache]);
       if (tar.status !== 0) {
         throw new Error(tar.stderr || "Failed to extract Node dist");
@@ -151,7 +171,9 @@ async function installOfficialNodeDist() {
 
   // Ship npm package + portable shims (official bin/npm is often a symlink into
   // the extract tree — resolve and rewrite so the packaged app stays relocatable).
-  const npmLib = join(extractRoot, "lib", "node_modules", "npm");
+  const npmLib = isWin
+    ? join(extractRoot, "node_modules", "npm")
+    : join(extractRoot, "lib", "node_modules", "npm");
   if (existsSync(npmLib)) {
     const destNpmLib = join(standalone, "lib", "node_modules", "npm");
     rmSync(destNpmLib, { recursive: true, force: true });
@@ -277,6 +299,13 @@ async function main() {
     meta = await installOfficialNodeDist();
     console.log(`Bundled official Node ${meta.version}`);
   } catch (error) {
+    if (crossBuild) {
+      // Cross-build has no usable fallback — the host binary would not run on
+      // the target platform. Surface the failure instead of silently bundling
+      // a wrong-platform node.
+      console.error(`Official Node dist for ${target} unavailable:`, error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
     console.warn(
       `Official Node dist unavailable (${error instanceof Error ? error.message : error}); falling back to system Node + libs`,
     );
@@ -288,6 +317,19 @@ async function main() {
     copySystemNodeWithLibs(sys.path);
     meta = { version: sys.version, source: sys.path };
     console.log(`Bundled system Node ${sys.version} from ${sys.path}`);
+  }
+
+  if (crossBuild) {
+    // The target node binary cannot run on this host — verify the file exists
+    // and record metadata, but skip execution smoke checks.
+    const sizeMb = (statSync(outNode).size / (1024 * 1024)).toFixed(1);
+    writeFileSync(
+      join(outDir, "node-version.txt"),
+      `${nodeVersion}\nsource=${meta.source}\ntarget=${target} (cross-build, smoke skipped)\n`,
+      "utf8",
+    );
+    console.log(`Runtime ready: ${outNode} (${sizeMb} MB) [cross-build, smoke skipped]`);
+    return;
   }
 
   // Verify the binary runs

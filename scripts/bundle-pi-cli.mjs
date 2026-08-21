@@ -15,7 +15,7 @@ import { join } from "path";
 const root = process.cwd();
 const standalone = join(root, ".next", "standalone");
 const binDir = join(standalone, "bin");
-const isWin = process.platform === "win32";
+const isWin = (process.env.RAINCODE_TARGET || process.platform).startsWith("win");
 
 const cliJs = join(
   standalone,

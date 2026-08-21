@@ -1,22 +1,28 @@
 #!/usr/bin/env node
 /**
- * Publish a RainCode release: build the macOS DMG, then create a GitHub
- * release on rainflowtb/raincode-desktop and upload the DMG as an asset.
+ * Publish a RainCode release: build all platform/arch installers, create ONE
+ * GitHub release on rainflowtb/raincode-desktop, and upload every asset.
  *
  * Single owner of the publish step — no parallel ad-hoc curl scripts.
  *
  * Usage:
- *   GH_TOKEN=ghp_xxx node scripts/publish-release.mjs [--dry-run] [--notes "changelog"]
+ *   GH_TOKEN=ghp_xxx node scripts/publish-release.mjs [--dry-run] [--notes "changelog"] [--only <id>]
  *
  * Prereqs:
  *   - package.json version is already bumped (npm version patch)
  *   - GH_TOKEN env has a GitHub PAT with `repo` scope
  *
- * --dry-run: build + resolve asset path + show what would be uploaded, skip API calls.
+ * Flags:
+ *   --dry-run   resolve asset paths + show what would be uploaded, skip API calls
+ *   --notes STR release body (default: auto-generated per-asset manifest)
+ *   --only ID   build/upload only one target, e.g. mac-arm64 / mac-x64 / win-x64 / win-arm64
+ *
+ * Each TARGET runs `npm run dist:<id>` which sets RAINCODE_TARGET so the bundled
+ * Node runtime matches the installer's platform/arch.
  */
 import { spawn } from "child_process";
 import { existsSync, statSync, readFileSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,17 +32,19 @@ const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const notesIdx = args.indexOf("--notes");
 const notes = notesIdx >= 0 ? args[notesIdx + 1] : "";
+const onlyIdx = args.indexOf("--only");
+const onlyId = onlyIdx >= 0 ? args[onlyIdx + 1] : "";
 
 function die(msg, code = 1) {
   console.error(`✗ ${msg}`);
   process.exit(code);
 }
 
-function run(cmd, args, opts = {}) {
+function run(cmd, cmdArgs, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: "inherit", cwd: root, ...opts });
+    const p = spawn(cmd, cmdArgs, { stdio: "inherit", cwd: root, ...opts });
     p.on("error", reject);
-    p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`${cmd} exited ${c}`))));
+    p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`${cmd} ${cmdArgs.join(" ")} exited ${c}`))));
   });
 }
 
@@ -45,9 +53,21 @@ function readVersion() {
   return pkg.version;
 }
 
-function assetPath(version) {
-  // matches build.dmg.artifactName = RainCode-${version}-${arch}.${ext}
-  return join(root, "dist", `RainCode-${version}-arm64.dmg`);
+// Build matrix: id → { script, file(version) }.
+// file() must match package.json build.{mac,win}.artifactName = RainCode-${version}-${arch}.${ext}
+// and electron-builder's arch suffix. mac → .dmg, win → .exe.
+const TARGETS = [
+  { id: "mac-arm64", script: "dist:mac-arm64", file: (v) => `RainCode-${v}-arm64.dmg`, label: "macOS Apple Silicon (M1/M2/M3/M4)" },
+  { id: "mac-x64", script: "dist:mac-x64", file: (v) => `RainCode-${v}-x64.dmg`, label: "macOS Intel" },
+  { id: "win-x64", script: "dist:win-x64", file: (v) => `RainCode-${v}-x64.exe`, label: "Windows x64 (Intel/AMD)" },
+  { id: "win-arm64", script: "dist:win-arm64", file: (v) => `RainCode-${v}-arm64.exe`, label: "Windows ARM64" },
+];
+
+function selectedTargets() {
+  if (!onlyId) return TARGETS;
+  const t = TARGETS.find((x) => x.id === onlyId);
+  if (!t) die(`Unknown --only target "${onlyId}". Valid: ${TARGETS.map((x) => x.id).join(", ")}`);
+  return [t];
 }
 
 async function ghApi(path, init = {}) {
@@ -68,8 +88,16 @@ async function ghApi(path, init = {}) {
   return data;
 }
 
+async function findReleaseByTag(tag) {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`, {
+    headers: { Authorization: `token ${process.env.GH_TOKEN}`, Accept: "application/vnd.github+json" },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) die(`GitHub API releases/tags/${tag} → ${res.status}`);
+  return res.json();
+}
+
 async function uploadAsset(uploadUrl, file) {
-  // uploadUrl already has the {?name,label} suffix; append our name
   const url = uploadUrl.replace("{?name,label}", `?name=${encodeURIComponent(basename(file))}`);
   const buf = readFileSync(file);
   const res = await fetch(url, {
@@ -88,8 +116,16 @@ async function uploadAsset(uploadUrl, file) {
   return data;
 }
 
-function basename(p) {
-  return p.split("/").pop();
+function releaseBody(version, built) {
+  const lines = [`RainCode ${version}.`, "", "## Downloads", ""];
+  for (const t of built) {
+    const f = t.file(version);
+    const url = `https://github.com/${REPO}/releases/download/v${version}/${encodeURIComponent(f)}`;
+    lines.push(`- **${t.label}** — \`${f}\``);
+    lines.push(`  ${url}`);
+  }
+  lines.push("", "## Install", "", "**macOS**: open the .dmg, drag RainCode to Applications. On first launch, if macOS warns the developer cannot be verified: System Settings → Privacy & Security → Open Anyway.", "", "**Windows**: run the .exe installer.");
+  return lines.join("\n");
 }
 
 async function main() {
@@ -97,46 +133,72 @@ async function main() {
 
   const version = readVersion();
   const tag = `v${version}`;
-  const dmg = assetPath(version);
+  const targets = selectedTargets();
   console.log(`▶ RainCode ${version}  (tag ${tag})  →  ${REPO}${dryRun ? "  [DRY RUN]" : ""}`);
+  console.log(`  targets: ${targets.map((t) => t.id).join(", ")}`);
 
-  // 1. Build the DMG (idempotent: reuse if already built & version matches)
-  const needBuild = !existsSync(dmg);
-  if (needBuild) {
-    console.log("\n● Building DMG (npm run dist:dmg) — this takes several minutes…");
-    await run("npm", ["run", "dist:dmg"]);
-  } else {
-    console.log(`\n● Reusing existing ${dmg}`);
+  // 1. Build each target (reuse existing artifact if present)
+  const built = [];
+  for (const t of targets) {
+    const assetFile = join(root, "dist", t.file(version));
+    if (existsSync(assetFile)) {
+      const sizeMB = (statSync(assetFile).size / 1024 / 1024).toFixed(1);
+      console.log(`\n● Reusing existing ${t.id}: ${t.file(version)} (${sizeMB} MB)`);
+    } else {
+      console.log(`\n● Building ${t.id} (npm run ${t.script}) — this takes several minutes…`);
+      await run("npm", ["run", t.script]);
+    }
+    if (!existsSync(assetFile)) die(`build did not produce ${assetFile}`);
+    const sizeMB = (statSync(assetFile).size / 1024 / 1024).toFixed(1);
+    console.log(`  ✓ ${t.file(version)} ready (${sizeMB} MB)`);
+    built.push({ ...t, path: assetFile });
   }
-  if (!existsSync(dmg)) die(`build did not produce ${dmg}`);
-  const sizeMB = (statSync(dmg).size / 1024 / 1024).toFixed(1);
-  console.log(`  ✓ DMG ready: ${dmg} (${sizeMB} MB)`);
 
   if (dryRun) {
-    console.log(`\n[DRY RUN] would create release ${tag} on ${REPO} and upload ${basename(dmg)}`);
+    console.log(`\n[DRY RUN] would create/patch release ${tag} on ${REPO} and upload ${built.length} asset(s):`);
+    for (const b of built) console.log(`  - ${b.file(version)}`);
     return;
   }
 
-  // 2. Create the release — GitHub auto-creates the tag on desktop repo's main.
-  console.log(`\n● Creating release ${tag} on ${REPO}…`);
-  const body = notes || `RainCode ${version} (macOS Apple Silicon).\n\n## Download\n- \`RainCode-${version}-arm64.dmg\` (Apple Silicon M1/M2/M3/M4)\n\n## Install\n1. Open the .dmg\n2. Drag RainCode into Applications\n3. On first launch, if macOS warns the developer cannot be verified: System Settings → Privacy & Security → Open Anyway`;
-  const release = await ghApi(`/repos/${REPO}/releases`, {
-    method: "POST",
-    body: JSON.stringify({
-      tag_name: tag,
-      target_commitish: "main",
-      name: `RainCode ${version} (macOS Apple Silicon)`,
-      body,
-      draft: false,
-      prerelease: false,
-    }),
-  });
-  console.log(`  ✓ release id ${release.id}: ${release.html_url}`);
+  // 2. Find or create the release (idempotent: v1.1.3 may already exist from a partial run)
+  let release = await findReleaseByTag(tag);
+  if (release) {
+    console.log(`\n● Release ${tag} already exists (${release.html_url}) — patching assets`);
+  } else {
+    console.log(`\n● Creating release ${tag} on ${REPO}…`);
+    release = await ghApi(`/repos/${REPO}/releases`, {
+      method: "POST",
+      body: JSON.stringify({
+        tag_name: tag,
+        target_commitish: "main",
+        name: `RainCode ${version}`,
+        body: releaseBody(version, built),
+        draft: false,
+        prerelease: false,
+      }),
+    });
+    console.log(`  ✓ release id ${release.id}: ${release.html_url}`);
+  }
 
-  // 4. Upload the DMG asset
-  console.log(`\n● Uploading ${basename(dmg)} (${sizeMB} MB)…`);
-  const asset = await uploadAsset(release.upload_url, dmg);
-  console.log(`  ✓ ${asset.browser_download_url}`);
+  // 3. Upload assets that aren't already attached
+  const existingAssets = new Map((release.assets || []).map((a) => [a.name, a]));
+  for (const b of built) {
+    const name = b.file(version);
+    if (existingAssets.has(name)) {
+      console.log(`\n● ${name} already uploaded — skipping`);
+      continue;
+    }
+    const sizeMB = (statSync(b.path).size / 1024 / 1024).toFixed(1);
+    console.log(`\n● Uploading ${name} (${sizeMB} MB)…`);
+    const asset = await uploadAsset(release.upload_url, b.path);
+    console.log(`  ✓ ${asset.browser_download_url}`);
+  }
+
+  // 4. Refresh release body so the download manifest lists every asset
+  await ghApi(`/repos/${REPO}/releases/${release.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ body: releaseBody(version, built) }),
+  });
 
   console.log(`\n✓ Published: ${release.html_url}`);
 }

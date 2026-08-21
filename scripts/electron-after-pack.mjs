@@ -140,8 +140,9 @@ export default async function afterPack(context) {
     console.log(`[afterPack] Copying bundled runtime → ${destBin}`);
     rmSync(destBin, { recursive: true, force: true });
     cpSync(srcBin, destBin, COPY_OPTS);
-    const nodeName = process.platform === "win32" ? "node.exe" : "node";
-    const piName = process.platform === "win32" ? "pi.cmd" : "pi";
+    const targetIsWin = (process.env.RAINCODE_TARGET || process.platform).startsWith("win");
+    const nodeName = targetIsWin ? "node.exe" : "node";
+    const piName = targetIsWin ? "pi.cmd" : "pi";
     if (!existsSync(join(destBin, nodeName))) {
       throw new Error(`afterPack: bundled ${nodeName} missing — run bundle-runtime-node.mjs`);
     }
