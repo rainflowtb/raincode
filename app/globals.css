@@ -359,7 +359,10 @@ body {
   height: 0;
 }
 
-/* Floating thumb drawn by lib/overlay-scrollbars.ts. */
+/* Floating thumb drawn by lib/overlay-scrollbars.ts.
+   MUST stay below the sidebar stacking context (.sidebar-container is z 200):
+   cursor-anchored menus (SessionItemMenu, FileExplorerContextMenu) render
+   inline inside the sidebar, so a thumb above 200 paints over them. */
 .overlay-scrollbar-thumb {
   position: fixed;
   width: 4px;
@@ -367,7 +370,7 @@ body {
   background: color-mix(in oklab, var(--text) 24%, transparent);
   opacity: 0;
   transition: opacity 0.18s ease;
-  z-index: 400;
+  z-index: 65;
   pointer-events: none;
 }
 .overlay-scrollbar-thumb.is-visible {
