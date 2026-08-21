@@ -7,7 +7,7 @@
  * with RAINFLOWTB_BASE_URL when testing against a staging instance.
  */
 export const RAINFLOWTB_PROVIDER_ID = "rainflowtb";
-export const RAINFLOWTB_DISPLAY_NAME = "RAINFLOWTB";
+export const RAINFLOWTB_DISPLAY_NAME = "RainFlow TB";
 export const RAINFLOWTB_BASE_URL = (
   process.env.RAINFLOWTB_BASE_URL || "https://api.rainflowtb.com"
 ).replace(/\/+$/, "");

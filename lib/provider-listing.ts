@@ -26,7 +26,7 @@ const OAUTH_DISPLAY_NAMES: Record<string, string> = {
   "minimax-oauth": "MiniMax (OAuth)",
   nous: "Nous Portal",
   atomgit: "AtomGit Coding Plan",
-  rainflowtb: "RAINFLOW TB",
+  rainflowtb: "RainFlow TB",
 };
 
 export interface ProviderListingInput {
@@ -89,12 +89,25 @@ export function buildApiKeyProviderList(
   return [];
 }
 
+/** RainCode's own subscription provider leads the OAuth list; the rest keep
+ *  their builtin declaration order. */
+const OAUTH_ORDER = ["rainflowtb"];
+function orderOAuthProviders(providers: ProviderListingInput[]): ProviderListingInput[] {
+  const ranked = new Map<string, ProviderListingInput>();
+  const rest: ProviderListingInput[] = [];
+  for (const p of providers) {
+    if (OAUTH_ORDER.includes(p.id)) ranked.set(p.id, p);
+    else rest.push(p);
+  }
+  return [...OAUTH_ORDER.map((id) => ranked.get(id)).filter(Boolean), ...rest] as ProviderListingInput[];
+}
+
 /** Providers that can be authenticated with OAuth. */
 export function buildOAuthProviderList(
   providers: readonly ProviderListingInput[],
 ): OAuthProviderListing[] {
   const result: OAuthProviderListing[] = [];
-  for (const provider of dedupeById(providers)) {
+  for (const provider of orderOAuthProviders(dedupeById(providers))) {
     if (!provider.hasOAuth) continue;
     result.push({
       id: provider.id,
