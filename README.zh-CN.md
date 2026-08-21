@@ -4,22 +4,20 @@
 
 **本地编程智能体工作区 — 对话、文件、Git、终端一体化**
 
-Electron 桌面端 · 浏览器 UI · [ct-jyjntc/pi-web](https://github.com/ct-jyjntc/pi-web)
+Electron 桌面端 · 浏览器 UI · [rainflowtb/raincode-desktop](https://github.com/rainflowtb/raincode-desktop)
 
 [![Node](https://img.shields.io/badge/node-%3E%3D22.19-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](./LICENSE)
 [![Platform](https://img.shields.io/badge/Desktop%20%2B%20Browser-111111?style=for-the-badge)](#安装)
-[![GitHub](https://img.shields.io/badge/GitHub-ct--jyjntc%2Fpi--web-181717?style=for-the-badge&logo=github)](https://github.com/ct-jyjntc/pi-web)
+[![GitHub](https://img.shields.io/badge/GitHub-rainflowtb%2Fraincode--desktop-181717?style=for-the-badge&logo=github)](https://github.com/rainflowtb/raincode-desktop)
 
 [English](./README.md)
 ·
-[产品页](https://ct-jyjntc.github.io/pi-web/)
-·
 [桌面架构](./docs/desktop-architecture.md)
 ·
-[Releases](https://github.com/ct-jyjntc/pi-web/releases)
+[Releases](https://github.com/rainflowtb/raincode-desktop/releases)
 ·
-[Issues](https://github.com/ct-jyjntc/pi-web/issues)
+[Issues](https://github.com/rainflowtb/raincode-desktop/issues)
 ·
 [LINUX DO](https://linux.do/)
 
@@ -49,9 +47,8 @@ RainCode 是跑在你本机上的 **local-first 编程智能体工作区**。
 
 | | |
 | :--- | :--- |
-| 仓库 | [github.com/ct-jyjntc/pi-web](https://github.com/ct-jyjntc/pi-web) |
-| 产品页 | [ct-jyjntc.github.io/pi-web](https://ct-jyjntc.github.io/pi-web/) |
-| 桌面端 | macOS arm64 DMG · Windows x64 NSIS · **`app://` UI + 双 IPC runtime** |
+| 仓库 | [github.com/rainflowtb/raincode-desktop](https://github.com/rainflowtb/raincode-desktop) |
+| 桌面端 | macOS arm64/x64 DMG · Windows x64/arm64 NSIS · **`app://` UI + 双 IPC runtime** |
 | 浏览器 | Next.js · `http://127.0.0.1:30141` |
 | 从源码开发 | Node **≥ 22.19.0** |
 | 许可 | MIT |
@@ -60,12 +57,14 @@ RainCode 是跑在你本机上的 **local-first 编程智能体工作区**。
 
 ### 桌面端（推荐）
 
-从 [Releases](https://github.com/ct-jyjntc/pi-web/releases/latest) 下载：
+从 [Releases](https://github.com/rainflowtb/raincode-desktop/releases/latest) 下载：
 
 | 平台 | 产物 |
 | --- | --- |
-| macOS（Apple Silicon） | `Pi-Web-<version>-arm64.dmg` |
-| Windows（x64） | `Pi-Web-<version>-x64.exe` |
+| macOS（Apple Silicon） | `RainCode-<version>-arm64.dmg` |
+| macOS（Intel） | `RainCode-<version>-x64.dmg` |
+| Windows（x64） | `RainCode-<version>-x64.exe` |
+| Windows（ARM64） | `RainCode-<version>-arm64.exe` |
 
 安装包 **内置 Node**。终端用户无需安装 Node，也无需再起服务。
 
@@ -75,8 +74,8 @@ RainCode 是跑在你本机上的 **local-first 编程智能体工作区**。
 ### 浏览器（从源码）
 
 ```bash
-git clone https://github.com/ct-jyjntc/pi-web.git
-cd pi-web
+git clone https://github.com/rainflowtb/raincode-desktop.git
+cd raincode-desktop
 npm install
 npm run dev          # http://127.0.0.1:30141
 ```
@@ -169,7 +168,7 @@ Electron main
 | `…/cache/jiti` | 桌面 runtime 转译缓存 |
 | Electron 日志 | `app.getPath("logs")/main.log` |
 
-文件访问白名单：会话 cwd、项目根、`~/pi-cwd-*`、以及显式允许的根。
+文件访问白名单：会话 cwd、项目根、`~/raincode-*`、以及显式允许的根。
 
 ### 安全
 
@@ -183,8 +182,8 @@ Electron main
 > 需要 Node.js **≥ 22.19.0**。
 
 ```bash
-git clone https://github.com/ct-jyjntc/pi-web.git
-cd pi-web
+git clone https://github.com/rainflowtb/raincode-desktop.git
+cd raincode-desktop
 npm install
 
 # 浏览器 UI
@@ -271,7 +270,6 @@ docs/              产品页、desktop-architecture、worktree、截图
 
 ## 文档
 
-- [产品页](https://ct-jyjntc.github.io/pi-web/)
 - [桌面架构](./docs/desktop-architecture.md) — `app://`、light/heavy 拆分、缓存约定
 - [Worktree 说明](./docs/worktrees.zh-CN.md)
 - [发版清单](./docs/release.md)
@@ -291,6 +289,6 @@ docs/              产品页、desktop-architecture、worktree、截图
 
 <div align="center">
 
-**MIT** · [ct-jyjntc/pi-web](https://github.com/ct-jyjntc/pi-web) · [LINUX DO](https://linux.do/)
+**MIT** · [rainflowtb/raincode-desktop](https://github.com/rainflowtb/raincode-desktop) · [LINUX DO](https://linux.do/)
 
 </div>

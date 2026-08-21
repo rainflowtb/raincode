@@ -675,7 +675,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
                 gap: 12,
                 padding: "0 14px",
                 fontFamily: "var(--font-mono)",
@@ -683,14 +682,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1, lineHeight: 1, overflow: "hidden" }}>
                 <BrandMark size={22} fontSize={18} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", gap: 2, flexShrink: 0, lineHeight: 1.2 }}>
-                <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.2 }}>
-                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
-                </span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.2 }}>
-                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
-                </span>
               </div>
             </div>
             <NoticeShelf notices={notices} align="right" />

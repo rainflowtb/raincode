@@ -37,10 +37,10 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
     if (s.projectRoot) roots.add(normalizeSlashes(s.projectRoot));
   }
 
-  // Also allow ~/pi-cwd-* directories created by the default-cwd endpoint.
+  // Allow ~/raincode-<timestamp> default-cwd directories (and legacy ~/pi-cwd-<date>).
   try {
     for (const name of readdirSync(homedir())) {
-      if (/^pi-cwd-\d{8}$/.test(name)) {
+      if (/^raincode-\d{8}-\d{6}-[0-9a-f]{4}$/.test(name) || /^pi-cwd-\d{8}$/.test(name)) {
         roots.add(normalizeSlashes(path.join(homedir(), name)));
       }
     }
@@ -102,7 +102,7 @@ export function fileAccessDenied(
       "Path is not absolute. /api/files expects absolute path segments (e.g. /api/files/Users/you/proj/file.ts), not a project-relative name.";
   } else {
     hint =
-      "Path is not under any allowed root (session cwd, projectRoot, ~/pi-cwd-*, or allowFileRoot). Pick a file inside rootsSample or register the project via cwd/validate.";
+      "Path is not under any allowed root (session cwd, projectRoot, ~/raincode-*, or allowFileRoot). Pick a file inside rootsSample or register the project via cwd/validate.";
   }
   return {
     error: "Access denied",

@@ -4,22 +4,20 @@
 
 **Local coding-agent workspace — chat, files, Git, and terminals in one app**
 
-Electron desktop · browser UI · [ct-jyjntc/pi-web](https://github.com/ct-jyjntc/pi-web)
+Electron desktop · browser UI · [rainflowtb/raincode-desktop](https://github.com/rainflowtb/raincode-desktop)
 
 [![Node](https://img.shields.io/badge/node-%3E%3D22.19-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](./LICENSE)
 [![Platform](https://img.shields.io/badge/Desktop%20%2B%20Browser-111111?style=for-the-badge)](#install)
-[![GitHub](https://img.shields.io/badge/GitHub-ct--jyjntc%2Fpi--web-181717?style=for-the-badge&logo=github)](https://github.com/ct-jyjntc/pi-web)
+[![GitHub](https://img.shields.io/badge/GitHub-rainflowtb%2Fraincode--desktop-181717?style=for-the-badge&logo=github)](https://github.com/rainflowtb/raincode-desktop)
 
 [中文](./README.zh-CN.md)
 ·
-[Product site](https://ct-jyjntc.github.io/pi-web/)
-·
 [Desktop architecture](./docs/desktop-architecture.md)
 ·
-[Releases](https://github.com/ct-jyjntc/pi-web/releases)
+[Releases](https://github.com/rainflowtb/raincode-desktop/releases)
 ·
-[Issues](https://github.com/ct-jyjntc/pi-web/issues)
+[Issues](https://github.com/rainflowtb/raincode-desktop/issues)
 ·
 [LINUX DO](https://linux.do/)
 
@@ -49,9 +47,8 @@ Open a project, chat with the agent, review Git, browse files, and open terminal
 
 | | |
 | :--- | :--- |
-| Repository | [github.com/ct-jyjntc/pi-web](https://github.com/ct-jyjntc/pi-web) |
-| Product site | [ct-jyjntc.github.io/pi-web](https://ct-jyjntc.github.io/pi-web/) |
-| Desktop | macOS arm64 DMG · Windows x64 NSIS · **`app://` UI + dual IPC runtimes** |
+| Repository | [github.com/rainflowtb/raincode-desktop](https://github.com/rainflowtb/raincode-desktop) |
+| Desktop | macOS arm64/x64 DMG · Windows x64/arm64 NSIS · **`app://` UI + dual IPC runtimes** |
 | Browser | Next.js on `http://127.0.0.1:30141` |
 | Node (from source) | **≥ 22.19.0** |
 | License | MIT |
@@ -60,12 +57,14 @@ Open a project, chat with the agent, review Git, browse files, and open terminal
 
 ### Desktop (recommended)
 
-Download from [Releases](https://github.com/ct-jyjntc/pi-web/releases/latest):
+Download from [Releases](https://github.com/rainflowtb/raincode-desktop/releases/latest):
 
 | Platform | Artifact |
 | --- | --- |
-| macOS (Apple Silicon) | `Pi-Web-<version>-arm64.dmg` |
-| Windows (x64) | `Pi-Web-<version>-x64.exe` |
+| macOS (Apple Silicon) | `RainCode-<version>-arm64.dmg` |
+| macOS (Intel) | `RainCode-<version>-x64.dmg` |
+| Windows (x64) | `RainCode-<version>-x64.exe` |
+| Windows (ARM64) | `RainCode-<version>-arm64.exe` |
 
 Installers **bundle Node**. End users do not need to install Node or start a server.
 
@@ -75,8 +74,8 @@ Installers **bundle Node**. End users do not need to install Node or start a ser
 ### Browser (from source)
 
 ```bash
-git clone https://github.com/ct-jyjntc/pi-web.git
-cd pi-web
+git clone https://github.com/rainflowtb/raincode-desktop.git
+cd raincode-desktop
 npm install
 npm run dev          # http://127.0.0.1:30141
 ```
@@ -169,7 +168,7 @@ Browser  ──REST + SSE──▶  Next.js (app/ + app/api) on 127.0.0.1:30141
 | `…/cache/jiti` | Desktop runtime transpile cache |
 | Electron logs | `app.getPath("logs")/main.log` |
 
-File access is allow-listed: session cwds, project roots, `~/pi-cwd-*`, and explicitly allowed roots.
+File access is allow-listed: session cwds, project roots, `~/raincode-*`, and explicitly allowed roots.
 
 ### Security
 
@@ -183,8 +182,8 @@ File access is allow-listed: session cwds, project roots, `~/pi-cwd-*`, and expl
 > Node.js **≥ 22.19.0**.
 
 ```bash
-git clone https://github.com/ct-jyjntc/pi-web.git
-cd pi-web
+git clone https://github.com/rainflowtb/raincode-desktop.git
+cd raincode-desktop
 npm install
 
 # Browser UI
@@ -271,7 +270,6 @@ docs/              product site, desktop-architecture, worktrees, screenshots
 
 ## Docs
 
-- [Product site](https://ct-jyjntc.github.io/pi-web/)
 - [Desktop architecture](./docs/desktop-architecture.md) — `app://`, light/heavy split, cache rules
 - [Worktrees](./docs/worktrees.md)
 - [Release checklist](./docs/release.md)
@@ -291,6 +289,6 @@ Shared with [LINUX DO](https://linux.do/) — 新的理想型社区，*Where pos
 
 <div align="center">
 
-**MIT** · [ct-jyjntc/pi-web](https://github.com/ct-jyjntc/pi-web) · [LINUX DO](https://linux.do/)
+**MIT** · [rainflowtb/raincode-desktop](https://github.com/rainflowtb/raincode-desktop) · [LINUX DO](https://linux.do/)
 
 </div>
