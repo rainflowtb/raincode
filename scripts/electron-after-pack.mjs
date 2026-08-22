@@ -190,4 +190,26 @@ export default async function afterPack(context) {
       `[afterPack] macOS ad-hoc signing deferred to electron-builder (identity: "-") for ${productFilename}.app`,
     );
   }
+
+  // S4 hardening: bake Electron fuses — validate app.asar integrity at load,
+  // only load app code from asar, block NODE_OPTIONS / --inspect injection and
+  // ELECTRON_RUN_AS_NODE. This raises the cost of repacking the shell; the
+  // bundled daemon runtime is attested separately by the per-device proof
+  // (lib/rainflowtb-device.ts). Must run before electron-builder's signing.
+  const { flipFuses, FuseVersion, FuseV1Options } = await import("@electron/fuses");
+  const electronBinary =
+    context.electronPlatformName === "darwin"
+      ? join(appOutDir, `${productFilename}.app`, "Contents", "MacOS", productFilename)
+      : join(appOutDir, `${productFilename}.exe`);
+  await flipFuses(electronBinary, {
+    version: FuseVersion.V1,
+    resetAdHocDarwinSignature: true,
+    [FuseV1Options.RunAsNode]: false,
+    [FuseV1Options.EnableCookieEncryption]: false,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+    [FuseV1Options.OnlyLoadAppFromAsar]: true,
+  });
+  console.log("[afterPack] Electron fuses hardened (asar integrity, no NODE_OPTIONS/inspect/RunAsNode)");
 }

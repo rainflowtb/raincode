@@ -36,6 +36,15 @@ import {
   RAINFLOWTB_WALLET_BASE_URL,
 } from "./rainflowtb-constants";
 import { rainflowtbProofHeaders } from "./rainflowtb-proof";
+import { ensureDeviceRegistered } from "./rainflowtb-device";
+
+/** Best-effort device-key registration; failures only delay restricted-model
+ *  access until the next attempt, so login/refresh must never fail on this. */
+function registerDeviceInBackground(accessToken: string): void {
+  ensureDeviceRegistered(accessToken).catch((error) => {
+    console.warn("[rainflowtb] device registration failed:", error instanceof Error ? error.message : error);
+  });
+}
 export {
   RAINFLOWTB_PROVIDER_ID,
   RAINFLOWTB_DISPLAY_NAME,
@@ -160,6 +169,7 @@ const rainflowtbOAuth: OAuthAuth = {
     });
     await pollAuthorized(state, interaction.signal);
     const tokenResp = await exchangeToken(state, interaction.signal);
+    registerDeviceInBackground(asString(tokenResp.access_token));
 
     // Channel pick: subscription plan vs wallet. Chosen after login, before
     // any model call — the model catalog and chat base URL follow the pick.
@@ -195,6 +205,7 @@ const rainflowtbOAuth: OAuthAuth = {
     if (!credential.refresh) throw new Error("RAINFLOWTB 登录已过期，请重新登录");
     const data = await refreshBrokerToken(credential.refresh, signal);
     const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 7 * 24 * 3600;
+    registerDeviceInBackground(asString(data.access_token));
     return {
       ...credential,
       access: asString(data.access_token),
@@ -205,11 +216,16 @@ const rainflowtbOAuth: OAuthAuth = {
     };
   },
   async toAuth(credential: OAuthCredential) {
+    // Restricted models are gated on the per-device proof; make sure the
+    // public key is registered before the first gated call (cached per token).
+    await ensureDeviceRegistered(credential.access).catch((error) => {
+      console.warn("[rainflowtb] device registration failed:", error instanceof Error ? error.message : error);
+    });
     return {
       apiKey: credential.access,
       baseUrl: channelBaseUrl(credential.channel as Channel | undefined),
       // Official-client proof; the site gates zero-priced models on it.
-      headers: rainflowtbProofHeaders(),
+      headers: rainflowtbProofHeaders(credential.access),
     };
   },
 };
@@ -295,7 +311,7 @@ async function fetchRainflowtbModels(context: RefreshModelsContext): Promise<rea
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
     const res = await apiFetch(`${baseUrl}/models`, {
-      headers: { authorization: `Bearer ${token}`, ...rainflowtbProofHeaders() },
+      headers: { authorization: `Bearer ${token}`, ...rainflowtbProofHeaders(token) },
       signal: controller.signal,
     });
     if (res.status === 402) {
