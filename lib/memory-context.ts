@@ -1,6 +1,5 @@
 import {
   getProjectMemorySettings,
-  listMemoryFacts,
   memoryAutoInjectEnabled,
   recallMemoryFacts,
   type MemoryFact,
@@ -16,23 +15,28 @@ const FENCE_NOTE =
 
 /**
  * Query-aware recall of project memory only, wrapped in a <memory-context>
- * fence. Delivered as a hidden nextTurn custom message so the model sees it
- * but the transcript doesn't. Returns null when auto-inject is off, the query
- * is empty, or nothing matched.
+ * fence. Delivered as an ephemeral state-only message (lib/ephemeral-context.ts)
+ * so the model sees it but it never persists. Returns null when auto-inject is
+ * off, the query is empty, or nothing matched.
  *
- * Facts already present in the system-prompt auto-inject top-K are skipped so
- * the same lines are not delivered twice in one turn.
+ * `injectedFactTexts` is the frozen snapshot of what the system-prompt
+ * auto-inject actually carries (captured at session start); those facts are
+ * skipped so the same lines are not delivered twice in one turn. Deduping
+ * against the LIVE store would hide facts that entered the top-K mid-session
+ * but were never injected.
  */
-export function buildQueryMemoryContext(cwd: string, query: string): string | null {
+export function buildQueryMemoryContext(
+  cwd: string,
+  query: string,
+  injectedFactTexts: readonly string[],
+): string | null {
   if (!query.trim()) return null;
   const settings = getProjectMemorySettings();
   // Only inject when pi-web auto-inject is on (not just "memory tools enabled").
   if (!memoryAutoInjectEnabled(settings)) return null;
 
-  // System prompt already carries the top-K stable facts — don't re-send them.
-  const alreadyInjected = new Set(
-    listMemoryFacts(cwd).slice(0, settings.autoInjectTopK).map((fact) => fact.text),
-  );
+  // System prompt already carries these stable facts — don't re-send them.
+  const alreadyInjected = new Set(injectedFactTexts);
 
   const budget = MAX_BLOCK_CHARS - FENCE_NOTE.length - "<memory-context>\n\n</memory-context>".length;
   const facts: MemoryFact[] = recallMemoryFacts(cwd, query, PER_SCOPE_LIMIT + alreadyInjected.size)

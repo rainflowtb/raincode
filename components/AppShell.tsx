@@ -7,6 +7,7 @@ import {
   CircleGauge,
   FileText,
   Folder,
+  Globe,
   History,
   Plus,
   ShieldAlert,
@@ -45,6 +46,7 @@ import { invalidateUsage } from "./UsagePanel";
 import { Icon } from "./Icon";
 
 import {
+  BrowserPanel,
   ChatWindow,
   ContextPanel,
   GitPanel,
@@ -870,6 +872,7 @@ export function AppShell() {
             skillsDisabled={!activeCwd && !selectedSession?.cwd && !newSessionCwd}
             onModelsChanged={handleModelsChanged}
             onTrySkill={handleTrySkill}
+            onSessionsChanged={() => setRefreshKey((k) => k + 1)}
           />
         )}
 
@@ -1047,7 +1050,8 @@ export function AppShell() {
                   : tab.kind === "history" ? t("git.history")
                     : tab.kind === "explorer" ? t("sidebar.explorer")
                       : tab.kind === "context" ? t("shell.contextTab")
-                        : t("git.terminal");
+                        : tab.kind === "browser" ? t("shell.browserTab")
+                          : t("git.terminal");
               return (
                 <button
                   key={tab.id}
@@ -1066,6 +1070,8 @@ export function AppShell() {
                     <Icon icon={Folder} size={12} strokeWidth={1.8} />
                   ) : tab.kind === "context" ? (
                     <Icon icon={CircleGauge} size={12} strokeWidth={1.8} />
+                  ) : tab.kind === "browser" ? (
+                    <Icon icon={Globe} size={12} strokeWidth={1.8} />
                   ) : (
                     <Icon icon={Terminal} size={12} strokeWidth={1.8} />
                   )}
@@ -1088,7 +1094,7 @@ export function AppShell() {
             flex: 1,
             minHeight: 0,
             width: "auto",
-            margin: "0 8px 8px 4px",
+            margin: "0 8px 8px 0",
             display: rightPanelOpen ? "flex" : "none",
             flexDirection: "column",
           }}
@@ -1317,6 +1323,22 @@ export function AppShell() {
                 </div>
               )}
             </div>
+          </div>
+
+          <div style={{
+            display: activeWorkspaceTabId === "browser" ? "flex" : "none",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+          }}>
+            {mountedWorkspaceTabIds.includes("browser") && (
+              <BrowserPanel
+                sessionId={selectedSession?.id ?? null}
+                visible={rightPanelOpen && activeWorkspaceTabId === "browser"}
+                suspended={rightPanelResizing || viewerFile !== null || settingsOpen}
+              />
+            )}
           </div>
         </div>
         </div>

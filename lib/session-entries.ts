@@ -114,6 +114,29 @@ function openCachedSession(filePath: string): { manager: ReturnType<typeof Sessi
   return { manager, entries };
 }
 
+// Walk the active branch from root to leaf, including every entry type.
+// Mirrors the SDK's buildSessionPath (not exported). The exported
+// buildContextEntries deliberately truncates everything before the latest
+// compaction — that is the *model* context, not the human transcript.
+function buildBranchPath(
+  entries: SessionEntry[],
+  leafId: string | null | undefined,
+  byId: Map<string, SessionEntry>,
+): SessionEntry[] {
+  if (leafId === null) return [];
+  let leaf = leafId ? byId.get(leafId) : undefined;
+  leaf ??= entries[entries.length - 1];
+  if (!leaf) return [];
+  const path: SessionEntry[] = [];
+  let current: SessionEntry | undefined = leaf;
+  while (current) {
+    path.push(current);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  path.reverse();
+  return path;
+}
+
 export function buildSessionContext(
   entries: SessionEntry[],
   leafId?: string | null,
@@ -125,22 +148,16 @@ export function buildSessionContext(
   const piEntries = entries as unknown as PiSessionEntry[];
   const piCtx = piBuildSessionContext(piEntries, leafId, byId as unknown as Map<string, PiSessionEntry>);
 
-  const contextEntries = piBuildContextEntries(
-    piEntries,
-    leafId,
-    byId as unknown as Map<string, PiSessionEntry>,
-  );
-
-  // Convert the SDK-selected context entries and their IDs together. This keeps
-  // fork/navigation targets aligned while preserving pi's compaction ordering.
+  // UI transcript = the full active branch. Compaction only limits what is
+  // sent to the model (see buildUsageMessages); the user keeps their whole
+  // history, with the compaction card rendered inline at its original spot.
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
-  for (const entry of contextEntries) {
-    const localEntry = entry as unknown as SessionEntry;
-    const m = entryToUiMessage(localEntry, options);
+  for (const entry of buildBranchPath(entries, leafId, byId)) {
+    const m = entryToUiMessage(entry, options);
     if (m) {
       messages.push(m);
-      entryIds.push(localEntry.id);
+      entryIds.push(entry.id);
     }
   }
 
@@ -262,24 +279,28 @@ function entryToUiMessage(
 }
 
 /**
- * Undo the defer transforms for token estimation only.
+ * Model-context messages for token/usage estimation only.
  *
- * The client always asks for deferred thinking/media, but the usage number must
- * reflect the full history. Rebuilding the context a second time without the
- * defer flags re-walks every entry in the archive; instead, restore each context
- * slot from its source entry: buildSessionContext renders a `message` entry as
- * exactly `normalizeToolCalls(entry.message)` when nothing is deferred, and
- * `entryIds[i]` is parallel to `messages[i]`. Non-message entries (compaction,
- * branch summaries, custom messages) are never deferred, so they pass through.
+ * This is the compacted set the API actually sees (SDK buildContextEntries:
+ * latest compaction summary + kept entries), with no defer transforms. The UI
+ * transcript from buildSessionContext is the full branch and must NOT feed
+ * usage math — it would over-report context pressure after a compaction.
  */
-export function restoreDeferredMessages(
-  context: SessionContext,
+export function buildUsageMessages(
   entries: SessionEntry[],
+  leafId?: string | null,
 ): AgentMessage[] {
   const byId = new Map<string, SessionEntry>();
   for (const entry of entries) byId.set(entry.id, entry);
-  return context.messages.map((message, index) => {
-    const entry = byId.get(context.entryIds[index]);
-    return entry?.type === "message" ? normalizeToolCalls(entry.message) : message;
-  });
+  const contextEntries = piBuildContextEntries(
+    entries as unknown as PiSessionEntry[],
+    leafId,
+    byId as unknown as Map<string, PiSessionEntry>,
+  );
+  const messages: AgentMessage[] = [];
+  for (const entry of contextEntries) {
+    const m = entryToUiMessage(entry as unknown as SessionEntry, {});
+    if (m) messages.push(m);
+  }
+  return messages;
 }

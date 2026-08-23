@@ -1686,10 +1686,12 @@ textarea.input-base:focus-visible {
   line-height: 1.3;
 }
 .sidebar-session-item {
-  /* Inset rounded rows on the canvas (LocalApi nav grammar) */
+  /* Inset rounded rows on the canvas (LocalApi nav grammar). Flush right edge:
+     the 8px gutter to the chat panel comes from the chat wrapper's padding
+     alone, so all panel gutters read as one consistent 8px. */
   box-sizing: border-box;
   border-radius: var(--radius-md);
-  margin: 1px 6px;
+  margin: 1px 0 1px 6px;
 }
 .sidebar-session-item.is-active {
   font-weight: 600;
@@ -1740,9 +1742,10 @@ textarea.input-base:focus-visible {
   color: var(--text);
   background: var(--bg-hover);
 }
-.chrome-btn:focus,
 .chrome-btn:focus-visible {
-  /* No outline ring — selection/hover fill is the affordance */
+  /* No outline ring — selection/hover fill is the affordance.
+     Keyboard focus only (:focus-visible): a plain :focus fill would stick
+     after mouse clicks and read as a stuck "selected" state. */
   outline: none;
   outline-offset: 0;
   color: var(--text);
@@ -1757,7 +1760,6 @@ textarea.input-base:focus-visible {
   background: var(--bg-selected);
 }
 .chrome-btn.is-active:hover:not(:disabled),
-.chrome-btn.is-active:focus,
 .chrome-btn.is-active:focus-visible {
   color: var(--text);
   background: var(--bg-selected);
@@ -2200,12 +2202,14 @@ textarea.input-base:focus-visible {
   opacity: 0;
   transition: opacity 0.12s ease, color 0.1s ease, background 0.1s ease;
 }
+/* Reveal on hover, or on keyboard focus only — :focus-within would keep the
+   button visible after a mouse click (stuck "selected" look). */
 .brand-toggle-slot:hover .brand-toggle-glyph,
-.brand-toggle-slot:focus-within .brand-toggle-glyph {
+.brand-toggle-slot:has(.brand-toggle-btn:focus-visible) .brand-toggle-glyph {
   opacity: 0;
 }
 .brand-toggle-slot:hover .brand-toggle-btn,
-.brand-toggle-slot:focus-within .brand-toggle-btn {
+.brand-toggle-slot:has(.brand-toggle-btn:focus-visible) .brand-toggle-btn {
   opacity: 1;
 }
 
@@ -3618,6 +3622,8 @@ textarea.input-base:focus-visible {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  /* Row fills (hover/selected) must not touch — matches sidebar spacing. */
+  gap: 2px;
 }
 .settings-page-nav.is-mobile .settings-page-nav-group {
   flex-direction: row;

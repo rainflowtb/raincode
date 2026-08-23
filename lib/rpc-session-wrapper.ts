@@ -137,6 +137,9 @@ export class AgentSessionWrapper {
   abortRequested = false;
   /** Last per-prompt memory recall block queued for this session (dedupe guard). @internal */
   lastMemoryContextBlock: string | null = null;
+  /** Fact texts the system-prompt auto-inject actually carries (frozen at session
+   *  start); per-prompt recall dedupes against this, not the live store. @internal */
+  injectedMemoryFacts: string[] = [];
   private extensionsBound = false;
   private extensionBindingPromise: Promise<void> | null = null;
   private extensionBindingError: unknown = null;

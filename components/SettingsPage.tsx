@@ -57,6 +57,7 @@ export function SettingsPage({
   onModelsChanged,
   visible = true,
   onTrySkill,
+  onSessionsChanged,
 }: {
   onClose: () => void;
   cwd?: string | null;
@@ -64,6 +65,9 @@ export function SettingsPage({
   initialSection?: SettingsSection;
   onModelsChanged?: () => void;
   onTrySkill?: (skill: SkillInfo) => void;
+  /** Archived → restore/delete mutates the sidebar session list; the shell
+   * bumps refreshKey so the project selector reloads immediately. */
+  onSessionsChanged?: () => void;
   /** AppShell keeps the page warm-mounted after first use / idle warmup and
    * toggles this instead of unmounting, so reopening is instant and state
    * (section, models, prefs) survives. */
@@ -641,13 +645,15 @@ export function SettingsPage({
         padding: "4px 8px 0",
       }
     : {
-        /* Same width as the session sidebar so switching tabs doesn't jump. */
+        /* Same width as the session sidebar so switching tabs doesn't jump.
+           No right padding: the content wrapper's 8px left padding is the
+           sole gutter — same grammar as sidebar → chat (AppShell). */
         width: "var(--sidebar-width)",
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
         overflow: "auto",
-        padding: "12px 8px",
+        padding: "12px 0 12px 8px",
       };
   const toolsPanel = (
     <ToolsSettingsPanel
@@ -737,7 +743,7 @@ export function SettingsPage({
               {memoryPanel}
             </div>
           )}
-          {section === "archived" && <ArchivedSessionsPanel />}
+          {section === "archived" && <ArchivedSessionsPanel onSessionsChanged={onSessionsChanged} />}
           {section === "permissions" && <PermissionsSettingsPanel />}
           {section === "usage" && <UsagePanel />}
           {section === "accounts" && <AccountsSettingsPanel />}

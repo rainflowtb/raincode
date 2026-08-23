@@ -1,7 +1,11 @@
 /** Shared shapes for RainCode custom agent tools. */
 
+export type ToolResultContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 export type ToolResult = {
-  content: Array<{ type: "text"; text: string }>;
+  content: ToolResultContent[];
   details?: unknown;
   isError?: boolean;
 };

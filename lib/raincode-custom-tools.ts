@@ -11,6 +11,7 @@ import { createCodeIntelTools } from "./agent-code-intel-tools";
 import { createDebugTools } from "./agent-debug-tools";
 import { createDiagnosticsTool, createWebTools } from "./agent-extra-tools";
 import { createProjectMemoryTools } from "./agent-memory-tools";
+import { createBrowserTool } from "./agent-browser-tool";
 import { readWebSettings } from "./web-settings";
 
 export const PI_WEB_REPLACEMENT_TOOL_NAMES = ["bash", "read", "edit", "write"] as const;
@@ -37,6 +38,7 @@ export function createRainCodeCustomTools(options: RainCodeCustomToolsOptions) {
         ...createDebugTools(cwd),
         ...createGithubTools(cwd),
         ...createAdvancedTools({ cwd, getSessionId }),
+        createBrowserTool(getSessionId ?? (() => undefined)),
       ]
     : [];
   return [

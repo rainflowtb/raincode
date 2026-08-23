@@ -43,6 +43,11 @@ export const TerminalPanel = dynamic(() => import("../TerminalPanel").then((m) =
   loading: LazyPanelFallback,
 });
 
+export const BrowserPanel = dynamic(() => import("./BrowserPanel").then((m) => m.BrowserPanel), {
+  ssr: false,
+  loading: LazyPanelFallback,
+});
+
 export const SettingsPage = dynamic(() => import("../SettingsPage").then((m) => m.SettingsPage), {
   ssr: false,
   // Blank fallback: AppShell warm-mounts SettingsPage hidden on idle, so a

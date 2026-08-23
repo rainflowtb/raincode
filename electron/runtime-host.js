@@ -6,6 +6,12 @@
  * load native modules built for that ABI, and talk over the child IPC channel
  * rather than a loopback port — nothing about the desktop client is a web server
  * any more, so runtime stalls can never hold up the window's own assets.
+ *
+ * Protocol additions for the built-in browser (reverse direction):
+ *   heavy runtime → main: { t:"browser", id, action, params }  (params.viewId always set)
+ *   main → heavy runtime: { t:"browser-res", id, ok, data?, error? }
+ * The handler is injected via setBrowserRequestHandler (browser-pool in main.js)
+ * to avoid a circular require; the default replies "browser unavailable".
  */
 const { spawn } = require("node:child_process");
 
@@ -101,9 +107,59 @@ function newId() {
   return `r${nextId}`;
 }
 
-function handleRuntimeMessage(message) {
+/**
+ * Reverse-IPC entry for `{ t:"browser" }` messages, injected by main.js
+ * (browser-pool) so this module never requires Electron UI code. Receives the
+ * full message and resolves { ok, data } / { ok: false, error }.
+ * @type {(message: object) => Promise<{ ok: boolean, data?: unknown, error?: string }>}
+ */
+let browserRequestHandler = async () => ({ ok: false, error: "browser unavailable" });
+
+/** @param {(message: object) => Promise<{ ok: boolean, data?: unknown, error?: string }>} fn */
+function setBrowserRequestHandler(fn) {
+  browserRequestHandler = typeof fn === "function" ? fn : async () => ({ ok: false, error: "browser unavailable" });
+}
+
+/**
+ * Replies to a `{ t:"browser" }` reverse request. The callback form of
+ * proc.send is required — see sendToRuntime for why (EPIPE on exit).
+ */
+function replyBrowser(proc, id, payload) {
+  try {
+    if (!proc || !proc.connected) return;
+    proc.send({ t: "browser-res", id, ...payload }, (error) => {
+      if (error) console.warn(`[electron] browser-res send failed: ${error.message}`);
+    });
+  } catch {
+    // runtime already gone
+  }
+}
+
+function handleRuntimeMessage(message, proc, role) {
   if (!message || typeof message !== "object") return;
   const { t, id } = message;
+
+  // Agent browser tool driving the main process's WebContentsView pool. Only
+  // the heavy runtime runs agent tools — the light runtime must never drive UI.
+  if (t === "browser") {
+    if (role !== "heavy") {
+      replyBrowser(proc, id, { ok: false, error: "browser actions are only available from the heavy runtime" });
+      return;
+    }
+    Promise.resolve(browserRequestHandler(message)).then(
+      (result) => {
+        if (result && typeof result === "object" && "ok" in result) {
+          replyBrowser(proc, id, result.ok
+            ? { ok: true, data: result.data }
+            : { ok: false, error: result.error || "browser request failed" });
+        } else {
+          replyBrowser(proc, id, { ok: true, data: result });
+        }
+      },
+      (error) => replyBrowser(proc, id, { ok: false, error: error instanceof Error ? error.message : String(error) }),
+    );
+    return;
+  }
 
   if (t === "res") {
     pending.get(id)?.resolve({
@@ -159,7 +215,7 @@ function startRuntime({ entry, cwd, env, nodeBinary, onLog, onExit }) {
       process.stderr.write(chunk);
       onLog?.(chunk);
     });
-    proc.on("message", handleRuntimeMessage);
+    proc.on("message", (message) => handleRuntimeMessage(message, proc, role));
     proc.on("exit", () => {
       children[role] = null;
       // Only fail what this runtime still owed an answer for.
@@ -297,6 +353,8 @@ module.exports = {
   startRuntime,
   registerApiBridge,
   getRuntimeProcess,
+  setBrowserRequestHandler,
+  handleRuntimeMessage,
   roleForPath,
   LIGHT_EXACT,
   LIGHT_PREFIXES,

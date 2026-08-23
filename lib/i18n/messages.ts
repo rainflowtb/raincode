@@ -5,6 +5,7 @@ export type MessageKey = keyof typeof en;
 const en = {
   // Common
   "common.back": "Back",
+  "common.forward": "Forward",
   "common.cancel": "Cancel",
   "common.close": "Close",
   "common.create": "Create",
@@ -388,6 +389,7 @@ const en = {
   "shell.contextUsage": "Context usage",
   "shell.extensionStatus": "Extensions",
   "shell.contextTab": "Context",
+  "shell.browserTab": "Browser",
   "shell.hideFilePanel": "Hide file panel",
   "shell.showFilePanel": "Show file panel",
   "shell.resizeFilePanel": "Drag to resize panel",
@@ -403,6 +405,12 @@ const en = {
   "shell.systemPromptEmpty": "System prompt is empty (tools are disabled)",
   "shell.systemPromptLoad": "Send a message to load the system prompt",
   "shell.sessionInfoEmpty": "Send a message or run /session to load session info",
+
+  // Browser panel
+  "browser.urlPlaceholder": "Enter a URL",
+  "browser.emptyHint": "Enter a URL above to start browsing",
+  "browser.mainTab": "Main",
+  "browser.desktopOnly": "The built-in browser is only available in the desktop app",
 
   // Project trust
   "trust.resourcesNotLoaded": "Restricted mode",
@@ -1051,6 +1059,7 @@ const en = {
 
 const zh: Record<MessageKey, string> = {
   "common.back": "返回",
+  "common.forward": "前进",
   "common.cancel": "取消",
   "common.close": "关闭",
   "common.create": "创建",
@@ -1431,6 +1440,7 @@ const zh: Record<MessageKey, string> = {
   "shell.contextUsage": "上下文占用",
   "shell.extensionStatus": "扩展状态",
   "shell.contextTab": "上下文",
+  "shell.browserTab": "浏览器",
   "shell.hideFilePanel": "隐藏文件面板",
   "shell.showFilePanel": "显示文件面板",
   "shell.resizeFilePanel": "拖动调整面板宽度",
@@ -1446,6 +1456,12 @@ const zh: Record<MessageKey, string> = {
   "shell.systemPromptEmpty": "系统提示词为空（工具已禁用）",
   "shell.systemPromptLoad": "发送一条消息以加载系统提示词",
   "shell.sessionInfoEmpty": "发送消息或运行 /session 以加载会话信息",
+
+  // Browser panel
+  "browser.urlPlaceholder": "输入网址",
+  "browser.emptyHint": "在上方输入网址开始浏览",
+  "browser.mainTab": "主标签",
+  "browser.desktopOnly": "内置浏览器仅在桌面应用中可用",
 
   // Project trust
   "trust.resourcesNotLoaded": "受限模式",

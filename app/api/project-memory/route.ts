@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolve } from "path";
-import { allowFileRoot, isWindowsAbsolutePath } from "@/lib/file-access";
+import { isWindowsAbsolutePath } from "@/lib/file-access";
 import {
   deleteMemoryFact,
   listMemoryFacts,
@@ -24,7 +24,6 @@ export async function GET(req: NextRequest) {
   try {
     const cwd = pickCwd(req.nextUrl.searchParams.get("cwd"));
     if (!cwd) return NextResponse.json({ error: "cwd is required" }, { status: 400 });
-    allowFileRoot(cwd);
     const settings = parseProjectMemorySettings(readWebSettings().projectMemory);
     const facts = listMemoryFacts(cwd);
     return NextResponse.json({ settings, facts });
@@ -52,7 +51,6 @@ export async function POST(req: NextRequest) {
     };
     const cwd = pickCwd(body.cwd);
     if (!cwd) return NextResponse.json({ error: "cwd is required" }, { status: 400 });
-    allowFileRoot(cwd);
     const settings = parseProjectMemorySettings(readWebSettings().projectMemory);
     if (!settings.enabled) {
       return NextResponse.json({ error: "Project memory is disabled" }, { status: 400 });
@@ -97,7 +95,6 @@ export async function DELETE(req: NextRequest) {
     if (typeof body.id !== "string" || !body.id.trim()) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
-    allowFileRoot(cwd);
     const removed = deleteMemoryFact(cwd, body.id.trim());
     if (!removed) return NextResponse.json({ error: "Fact not found" }, { status: 404 });
     return NextResponse.json({ ok: true });

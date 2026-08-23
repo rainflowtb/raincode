@@ -6,9 +6,9 @@ import {
 } from "@/lib/session-reader";
 import {
   buildSessionContext,
+  buildUsageMessages,
   getSessionEntries,
   getSessionManager,
-  restoreDeferredMessages,
 } from "@/lib/session-entries";
 import { foldProjections } from "@/lib/session-projections";
 
@@ -38,9 +38,9 @@ export async function GET(
 
     let contextUsage: Awaited<ReturnType<typeof estimateSessionContextUsage>> = null;
     try {
-      const usageMessages = (deferThinking || deferToolResultImages)
-        ? restoreDeferredMessages(context, entries)
-        : context.messages;
+      // Usage reflects what the API actually sees after compaction — not the
+      // full-history UI transcript (and never the deferred thinking/media).
+      const usageMessages = buildUsageMessages(entries, leafId);
       contextUsage = await estimateSessionContextUsage({
         cwd: readSessionHeader(filePath)?.cwd ?? process.cwd(),
         model: context.model,

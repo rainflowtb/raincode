@@ -36,7 +36,8 @@ export type WorkspaceTab =
   | { id: "history"; kind: "history" }
   | { id: "explorer"; kind: "explorer" }
   | { id: "context"; kind: "context" }
-  | { id: "terminal"; kind: "terminal" };
+  | { id: "terminal"; kind: "terminal" }
+  | { id: "browser"; kind: "browser" };
 
 export const WORKSPACE_TABS: WorkspaceTab[] = [
   { id: "review", kind: "review" },
@@ -44,4 +45,5 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
   { id: "explorer", kind: "explorer" },
   { id: "context", kind: "context" },
   { id: "terminal", kind: "terminal" },
+  { id: "browser", kind: "browser" },
 ];

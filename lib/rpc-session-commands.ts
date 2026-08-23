@@ -11,6 +11,7 @@ import { agentModeBrief } from "./agent-mode-brief";
 import { resolveContextUsageForUi } from "./context-usage";
 import { persistGlobalAgentMode } from "./global-agent-mode";
 import { buildQueryMemoryContext } from "./memory-context";
+import { setEphemeralContextMessage } from "./ephemeral-context";
 import { invalidateModelsCache } from "./models-cache";
 import type { AgentSessionLike } from "./pi-types";
 import { withProjectCommandEnvironment } from "./project-command-env";
@@ -67,45 +68,36 @@ export async function dispatchRpcSessionCommand(
       // Fire and forget — events come via subscribe
       const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
       const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
-      // Hermes-style query-aware recall: facts relevant to THIS message go to
-      // the model as a hidden nextTurn custom message — the LLM sees them via
-      // convertToLlm, but they never render in the transcript. Skipped when
-      // tools (and thus memory) are fully disabled for the session.
-      if (!wrapper.forceEmptySystemPrompt && typeof command.message === "string") {
-        try {
-          const memoryContext = buildQueryMemoryContext(wrapper.cwd, command.message);
-          if (memoryContext && memoryContext !== wrapper.lastMemoryContextBlock) {
-            wrapper.lastMemoryContextBlock = memoryContext;
-            await wrapper.inner.sendCustomMessage(
-              { customType: MEMORY_CONTEXT_CUSTOM_TYPE, content: memoryContext, display: false },
-              { deliverAs: "nextTurn" },
-            );
-          }
-        } catch (error) {
-          // Memory recall must never block a prompt.
-          console.error("[raincode] memory context injection failed:", error instanceof Error ? error.message : error);
-        }
-      }
-      // Tell the model what the mode expects of it. Delivered once per switch
-      // into the mode rather than per turn, so a long plan session doesn't
-      // accumulate copies of the same brief in context.
-      if (!wrapper.forceEmptySystemPrompt) {
-        const brief = agentModeBrief(wrapper.mode);
-        if (brief && wrapper.briefedMode !== wrapper.mode) {
-          try {
-            wrapper.briefedMode = wrapper.mode;
-            await wrapper.inner.sendCustomMessage(
-              { customType: AGENT_MODE_BRIEF_CUSTOM_TYPE, content: brief, display: false },
-              { deliverAs: "nextTurn" },
-            );
-          } catch (error) {
-            console.error("[raincode] agent mode brief injection failed:", error instanceof Error ? error.message : error);
-          }
-        }
-      }
       if (wrapper.abortRequested) {
         wrapper.emit({ type: "prompt_done" });
         return null;
+      }
+      // Ephemeral context: Hermes-style query-aware memory recall + the agent
+      // mode brief. These live ONLY in agent.state.messages (see
+      // lib/ephemeral-context.ts) — never persisted, replaced in place — and
+      // are injected after the abort check so a prompt that never starts
+      // leaves no stale block for a later, unrelated message. Skipped when
+      // tools (and thus memory) are fully disabled for the session.
+      if (!wrapper.forceEmptySystemPrompt) {
+        try {
+          if (typeof command.message === "string") {
+            const memoryContext = buildQueryMemoryContext(wrapper.cwd, command.message, wrapper.injectedMemoryFacts);
+            if (memoryContext !== wrapper.lastMemoryContextBlock) {
+              setEphemeralContextMessage(wrapper.inner.agent, MEMORY_CONTEXT_CUSTOM_TYPE, memoryContext);
+              wrapper.lastMemoryContextBlock = memoryContext;
+            }
+          }
+          // Delivered once per switch into the mode rather than per turn, so a
+          // long plan session doesn't accumulate copies of the same brief.
+          const brief = agentModeBrief(wrapper.mode);
+          if (brief && wrapper.briefedMode !== wrapper.mode) {
+            setEphemeralContextMessage(wrapper.inner.agent, AGENT_MODE_BRIEF_CUSTOM_TYPE, brief);
+            wrapper.briefedMode = wrapper.mode;
+          }
+        } catch (error) {
+          // Context injection must never block a prompt.
+          console.error("[raincode] ephemeral context injection failed:", error instanceof Error ? error.message : error);
+        }
       }
       wrapper.promptRunning = true;
       try {

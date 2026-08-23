@@ -5,7 +5,7 @@
 
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createRainCodeCustomTools } from "./raincode-custom-tools";
-import { buildMemoryInjectBlock } from "./project-memory";
+import { buildMemoryInjectBlock, selectMemoryInjectFacts } from "./project-memory";
 import { buildCapabilityBrief } from "./capability-brief";
 import { buildLeanPolicyText } from "./lean-policy";
 import { resolveLeanMode } from "./lean-settings";
@@ -27,6 +27,9 @@ import {
 } from "./rpc-registry";
 import { resolveToolAdoption } from "./rpc-session-tool-adoption";
 import { applyRepairToMessages, shouldRepairOnOpen } from "./session-tool-repair";
+import { browserMainRequest, isBrowserBridgeAvailable } from "./browser-bridge";
+import { pruneEphemeralContextMessages } from "./ephemeral-context";
+import { AGENT_MODE_BRIEF_CUSTOM_TYPE, MEMORY_CONTEXT_CUSTOM_TYPE } from "./types";
 import type { AgentMessage } from "./types";
 
 /**
@@ -164,6 +167,13 @@ export async function startRpcSession(
     });
 
     wrapper = new AgentSessionWrapper(inner, cwd);
+    // Frozen snapshot of what the system prompt actually carries — per-prompt
+    // recall dedupes against this (the live store drifts mid-session).
+    wrapper.injectedMemoryFacts = toolsFullyDisabled ? [] : selectMemoryInjectFacts(cwd).map((f) => f.text);
+    // Legacy hygiene: memory-context / mode-brief blocks were persisted by the
+    // SDK's nextTurn path before they became ephemeral (lib/ephemeral-context.ts);
+    // strip them from the freshly loaded context. The .jsonl file stays as-is.
+    pruneEphemeralContextMessages(inner.agent, [MEMORY_CONTEXT_CUSTOM_TYPE, AGENT_MODE_BRIEF_CUSTOM_TYPE]);
     // Omitted toolNames (resume / reconnect) still adopts the full coding list so
     // wrapper.mode can strip edit/write in plan without waiting for client set_tools.
     // [] stays all-off. Explicit names are adopted as given. Never pass a non-empty
@@ -201,6 +211,12 @@ export async function startRpcSession(
       // Drop request-id alias if we registered one.
       if (sessionId !== realSessionId && registry.get(sessionId) === wrapper) {
         registry.delete(sessionId);
+      }
+      // The browser tool keyed its view by this session id; drop it with the
+      // session (fork destroys the old wrapper immediately, so this is the
+      // single teardown point — no separate view lifecycle).
+      if (isBrowserBridgeAvailable()) {
+        void browserMainRequest("destroy", { viewId: realSessionId }).catch(() => {});
       }
     });
     registry.set(realSessionId, wrapper);

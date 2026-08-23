@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { roleForPath } = require("./runtime-host.js");
+const { roleForPath, handleRuntimeMessage, setBrowserRequestHandler } = require("./runtime-host.js");
 
 test("light routes never touch the agent SDK graph", () => {
   const light = [
@@ -71,4 +71,42 @@ test("SDK / ModelRuntime routes stay on heavy", () => {
   for (const path of heavy) {
     assert.equal(roleForPath(path), "heavy", path);
   }
+});
+
+function fakeProc(sent) {
+  return { connected: true, send: (msg, cb) => { sent.push(msg); cb?.(null); } };
+}
+
+test("browser reverse-IPC routes to the injected handler (heavy only)", async () => {
+  const sent = [];
+  const proc = fakeProc(sent);
+  try {
+    setBrowserRequestHandler(async (msg) => ({ ok: true, data: { echo: msg.action, viewId: msg.params.viewId } }));
+    handleRuntimeMessage({ t: "browser", id: "b1", action: "getState", params: { viewId: "s1" } }, proc, "heavy");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(sent[0], { t: "browser-res", id: "b1", ok: true, data: { echo: "getState", viewId: "s1" } });
+
+    // Handler errors come back as ok:false, never thrown.
+    setBrowserRequestHandler(async () => ({ ok: false, error: "boom" }));
+    handleRuntimeMessage({ t: "browser", id: "b2", action: "destroy", params: { viewId: "s1" } }, proc, "heavy");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(sent[1], { t: "browser-res", id: "b2", ok: false, error: "boom" });
+  } finally {
+    setBrowserRequestHandler(null);
+  }
+});
+
+test("browser messages from the light runtime are refused", async () => {
+  const sent = [];
+  handleRuntimeMessage({ t: "browser", id: "b3", action: "navigate", params: { viewId: "s1", url: "https://x" } }, fakeProc(sent), "light");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(sent[0].t, "browser-res");
+  assert.equal(sent[0].ok, false);
+});
+
+test("browser messages without a handler report unavailable", async () => {
+  const sent = [];
+  handleRuntimeMessage({ t: "browser", id: "b4", action: "getState", params: { viewId: "s1" } }, fakeProc(sent), "heavy");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(sent[0], { t: "browser-res", id: "b4", ok: false, error: "browser unavailable" });
 });

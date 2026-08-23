@@ -19,7 +19,7 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-export function ArchivedSessionsPanel() {
+export function ArchivedSessionsPanel({ onSessionsChanged }: { onSessionsChanged?: () => void }) {
   const { t } = useLocale();
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,12 +66,15 @@ export function ArchivedSessionsPanel() {
       const res = await apiFetch(`/api/sessions/${encodeURIComponent(id)}/archive`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       removeRow(id);
+      // The sidebar/project selector must see the restored session right away —
+      // its own 30s list cache would otherwise hide the project until TTL.
+      onSessionsChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       markBusy(id, false);
     }
-  }, [markBusy, removeRow]);
+  }, [markBusy, removeRow, onSessionsChanged]);
 
   const handleDelete = useCallback(async (id: string) => {
     markBusy(id, true);

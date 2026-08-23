@@ -40,7 +40,7 @@ export function createWebTools(): ToolDefinitionLike[] {
       "Not a browser: cannot click, log in, run JavaScript, or take screenshots.",
     promptSnippet: "Read a public web page as text (not a browser)",
     promptGuidelines: [
-      "web_fetch is read-only text. For screenshots or clicking, use a live MCP browser server — do not invent one via bash.",
+      "web_fetch is read-only text. For screenshots, clicking, or logged-in pages, use the browser tool (desktop app only).",
     ],
     parameters: Type.Object({
       url: Type.String({ description: "http(s) URL" }),

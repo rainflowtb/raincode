@@ -6,7 +6,8 @@ const fs = require("fs");
 const os = require("os");
 const { isTraySupported, ensureTray, destroyTray } = require("./tray");
 const { registerAppScheme, serveAppProtocol, APP_ORIGIN } = require("./app-protocol");
-const { startRuntime, registerApiBridge, getRuntimeProcess } = require("./runtime-host");
+const { startRuntime, registerApiBridge, getRuntimeProcess, setBrowserRequestHandler } = require("./runtime-host");
+const browserPool = require("./browser-pool");
 
 // The renderer is served locally over app://; the agent runtime is a private
 // child process reached over IPC. Must be called before app.whenReady().
@@ -663,6 +664,8 @@ function startAgentRuntime() {
     BROWSER: "none",
     NODE_ENV: "production",
     RAINCODE_RUNTIME: "daemon",
+    // Lets runtime code (lib/browser-bridge.ts) detect the desktop shell.
+    RAINCODE_DESKTOP: "1",
     PI_WEB_DESKTOP_DIST: path.join(appRoot, "desktop-dist"),
     ...(bundledNode ? { PI_WEB_NODE: bundledNode, PI_WEB_BUNDLE_NODE_BINARY: bundledNode } : {}),
     ...(bundledPi && fs.existsSync(bundledPi)
@@ -974,6 +977,20 @@ app.whenReady().then(() => {
   const logPath = initFileLogging();
   if (logPath) console.log(`[electron] Logging to ${logPath}`);
   registerApiBridge(ipcMain);
+  // Built-in browser: renderer panel drives the view pool directly; the agent
+  // tool in the heavy runtime reaches the same pool over reverse IPC.
+  setBrowserRequestHandler((msg) => browserPool.handleRuntime(msg.action, msg.params));
+  browserPool.setStateListener((state) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      mainWindow.webContents.send("raincode-desktop:browser-state", state);
+    } catch {
+      // window mid-teardown
+    }
+  });
+  ipcMain.handle("raincode-desktop:browser", (_event, payload) =>
+    browserPool.handleRenderer(payload, () => mainWindow),
+  );
   // AUMID + name are set at process start (see APP_USER_MODEL_ID). Re-assert on ready
   // in case a platform resets identity during startup.
   try {
@@ -1017,6 +1034,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   quitting = true;
+  browserPool.destroyAll();
   destroyTray();
   stopNextServer();
 });

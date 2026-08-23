@@ -16,12 +16,14 @@ import {
 import { getRoleModelRef } from "./model-roles";
 import {
   listMemoryFacts,
+  memoryBudgetChars,
+  memoryStoreUsage,
   parseProjectMemorySettings,
   retainMemoryFact,
   type ProjectMemorySettings,
 } from "./project-memory";
 import { assistantText as getText, contentText as messageText } from "./message-text";
-import { resolveSessionPath } from "./session-reader";
+import { readSessionHeader, resolveSessionPath } from "./session-reader";
 import { buildSessionContext, getSessionEntries } from "./session-entries";
 import { readWebSettings, type ModelRef, type WebSettings } from "./web-settings";
 
@@ -54,10 +56,8 @@ function getTurnCounts(): Map<string, number> {
 }
 
 /** Last ~10 user/assistant text snippets on the active branch, ~6KB total. */
-async function readRecentTranscript(sessionId: string): Promise<string> {
-  const path = await resolveSessionPath(sessionId);
-  if (!path) return "";
-  const { messages } = buildSessionContext(getSessionEntries(path));
+async function readRecentTranscript(sessionPath: string): Promise<string> {
+  const { messages } = buildSessionContext(getSessionEntries(sessionPath));
   const snippets: string[] = [];
   let total = 0;
   for (let i = messages.length - 1; i >= 0 && snippets.length < MAX_SNIPPETS; i--) {
@@ -159,13 +159,20 @@ function cleanFactText(text: string, settings: ProjectMemorySettings): string {
 }
 
 export async function runMemoryReview(opts: { cwd: string; sessionId: string }): Promise<MemoryReviewResult> {
-  const { cwd, sessionId } = opts;
+  const { sessionId } = opts;
   const prefs = readWebSettings();
   const memSettings = parseProjectMemorySettings(prefs.projectMemory);
   if (!memSettings.enabled) return { saved: [], skipped: true, reason: "disabled" };
   // Auto-review writes agent-invented facts into the store; only allow when
   // pi-web has explicitly enabled auto-inject (prompt ownership policy).
   if (!memSettings.autoInject) return { saved: [], skipped: true, reason: "auto-inject-off" };
+
+  // The store is keyed by the session FILE's own cwd: the caller's cwd and
+  // sessionId come from independent UI fallbacks and can disagree during a
+  // session-switch race, which would write A's facts into B's store.
+  const sessionPath = await resolveSessionPath(sessionId);
+  if (!sessionPath) return { saved: [], skipped: true, reason: "no-transcript" };
+  const cwd = readSessionHeader(sessionPath)?.cwd ?? opts.cwd;
 
   // Cadence: count user turns per session; only every Nth runs the review.
   const counts = getTurnCounts();
@@ -178,7 +185,13 @@ export async function runMemoryReview(opts: { cwd: string; sessionId: string }):
   }
   if (turn % REVIEW_INTERVAL !== 0) return { saved: [], skipped: true, reason: "cadence" };
 
-  const transcript = await readRecentTranscript(sessionId);
+  // A full store rejects every write; only the main agent's consolidate flow
+  // (it sees the overflow error) can drain it. Don't burn a utility-model call.
+  if (memoryStoreUsage(listMemoryFacts(cwd)) >= memoryBudgetChars(memSettings)) {
+    return { saved: [], skipped: true, reason: "budget-full" };
+  }
+
+  const transcript = await readRecentTranscript(sessionPath);
   if (!transcript) return { saved: [], skipped: true, reason: "no-transcript" };
 
   const resolved = await resolveReviewModel(cwd, prefs);

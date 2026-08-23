@@ -143,6 +143,7 @@ lib/
   file-paths.ts        client/server path encoding helpers
   markdown.ts          shared markdown helpers
   memory-review.ts     every-10th-turn utility-model transcript review → retainMemoryFact
+  ephemeral-context.ts  state-only context messages (memory recall, mode brief) — never persisted
   npx.ts               npx runner used by skill install
   pi-types.ts          local structural types for pi SDK objects
   rpc-manager.ts      façade — re-exports wrapper / registry / startRpcSession
@@ -158,6 +159,9 @@ lib/
   ensure-builtin-packages.ts  migrate legacy package settings + prewarm builtin extensions
   builtin-extensions.ts       heavy package paths + first-party extensionFactories
   first-party/                inline todo + ask_user_question (no jiti packages)
+  browser-bridge.ts   reverse-IPC client: heavy-runtime tools → main-process browser pool
+  agent-browser-tool.ts  agent `browser` tool (navigate / snapshot-by-ref / click / fill / screenshot)
+  desktop-browser.ts  typed accessor for window.raincodeDesktop.browser (renderer side)
   session-reader.ts   SessionManager wrappers + path cache + buildSessionContext adapter
   session-tool-repair.ts  append error toolResults for trailing unmatched tool calls
   tool-presets.ts     FULL_TOOL_NAMES + getFullToolNames()
@@ -168,6 +172,7 @@ lib/
 
 components/
   AppShell.tsx        layout + URL state + tab management
+  app-shell/BrowserPanel.tsx  built-in browser pane (right-panel workspace tab; owns native-view attach/detach)
   SessionSidebar.tsx  session tree + FileExplorer
   ChatWindow.tsx      chat composition + completion sound wrapper
   conversation/Transcript.tsx   windowed node list
@@ -213,6 +218,17 @@ hooks/
 - **Fork** (Fork button on user message): creates a new independent `.jsonl` file. Shown as a child in the sidebar tree via `parentSession` header field.
 - **In-session branch** (Continue button / BranchNavigator): calls `navigate_tree` within the same file. Multiple entries share the same `parentId`. Switching between them calls `/api/sessions/[id]/context?leafId=`.
 
+### Built-in browser (main-process `WebContentsView` pool)
+- Engine is Electron's own Chromium — no bundled Playwright/second browser, no remote-debugging port. Pool lives in `electron/browser-pool.js`, keyed by opaque viewId (agent session id, `"<sessionId>/<tab>"` for extra tabs opened via the tool's `tab` param, or `"scratch"` for the panel with no session); all views share `persist:raincode-browser` so logins survive sessions. Session teardown prefix-destroys the whole tab tree.
+- Reverse IPC reuses the existing child channel: heavy runtime → `{t:"browser"}` → main → `{t:"browser-res"}` (see `runtime-host.js` header). Heavy-only; the light runtime must never drive UI. Do not add a second transport for this.
+- At most one view is attached to the window; the native view paints **above** the DOM, so `BrowserPanel` detaches whenever hidden/suspended (tab switch, panel close, resize drag, viewer modal, settings). Never leave it attached while covered.
+- Agent interaction is snapshot-by-ref (`data-rc-ref` re-tagged per snapshot); refs go stale on navigation — that is by design, the tool tells the agent to re-snapshot.
+- Every view has a CDP debugger attached from creation with `Runtime`/`Log`/`Network` enabled, capturing console entries + exceptions (500) and network requests (300) into per-view ring buffers, reset on each main-frame navigation. The agent reads them via the tool's `console` / `network` / `response_body` actions (seq-based incremental reads); capture is the pool's job, formatting/filtering is the tool's. Side effect: DevTools cannot attach to a pooled view while the debugger is attached.
+- View teardown hangs off the existing `wrapper.onDestroy` in `rpc-session-start.ts` (fires on idle timeout, delete, and fork's immediate destroy) — no separate view lifecycle.
+
+### MCP disable/delete takes effect on the next tool call
+`NativeMcpRuntime.servers` holds live connections for the session's lifetime, but `findTool`/`listTools`/`status` first call `pruneStaleServers()` (`lib/first-party/mcp/runtime.ts`): a server disabled or deleted mid-session is disconnected and vanishes from the agent's available list immediately — no `/reload` needed to stop calls. The registered prompt copy is still a session-start snapshot (new servers' names appear after `/reload` or a new session), so keep `mcp.reloadHint` for that case.
+
 ### Session files can be fully rewritten
 `parentSession` in the header is **display metadata only** — has zero effect on chat content. Safe to `writeFileSync` the entire file (pi does this itself during migrations). Used when cascade-reparenting children on delete.
 
@@ -236,8 +252,8 @@ Every session uses the full built-in tool set (`getFullToolNames()` → `toolNam
 - **Edit (literal-match)**: `createRainCodeEditToolDefinition` accepts only `{ path, edits: [{ oldText, newText, replaceAll? }] }` (`lib/agent-edit-tool.ts` → engine `lib/literal-edit.ts`). Uniqueness is required per edit (errors report match count + line numbers); JS/TS results are parse-checked before write. `lib/file-observations.ts` records read/write/edit observations and rejects edits to unobserved or stale files ("read/re-read, then retry").
 - **LSP health**: catalog + PATH discovery in `lib/lsp-health.ts`; `GET /api/lsp?cwd=`; Settings → Tools; agent tool `lsp({ action })` (servers|hover|definition|references|rename) includes install hints. TS/JS keeps built-in service fallback.
 - **GitHub thin layer**: `lib/github.ts` + agent tool `github` (gh CLI, read-only). Virtual paths `pr://N`, `pr://N/diff`, `issue://N` work via `read` and `github({ action:"read" })`. API: `GET/POST /api/github`.
-- **Project memory**: project-only store under `~/.raincode/project-memory/<key>/facts.jsonl` with a hard char budget (`projectBudgetChars` default 4000; usage = Σ text.length + 20/fact). Overflow rejects with current entries + a consolidate instruction. `memory_retain` supports an atomic `operations[]` batch (add/replace/remove by unique substring, all-or-nothing); `memory_recall` searches project facts; `memory_reflect` is heuristic + optional utility-model synthesis. When auto-inject is on, top-K facts go into the system prompt via `appendSystemPromptOverride` in `startRpcSession`. Per-prompt, `send("prompt")` also recalls query-relevant facts (`buildQueryMemoryContext`, ≤800 chars, excluding facts already in the system top-K) as a hidden `memory-context` custom message (`sendCustomMessage(..., { deliverAs: "nextTurn" })`). `isHiddenContextMessage` keeps them out of the transcript. API: `POST /api/project-memory` with `{ action: "reflect" }`.
-- **Background memory review** (`lib/memory-review.ts` + `POST /api/memory-review`): ChatWindow fires it fire-and-forget after every agent-end; a per-session counter (`globalThis.__raincodeMemoryReviewTurnCounts`, resets on restart) runs the actual review only every 10th user turn. One utility-model JSON completion (smol → plan → default role chain) over the last ~10 transcript snippets (~6KB); validated facts are written via `retainMemoryFact` (secret guard / dedupe / budget are the safety net). Saved facts surface as a subtle info notice.
+- **Project memory**: project-only store under `~/.raincode/project-memory/<key>/facts.jsonl` with a hard char budget (`projectBudgetChars` default 4000; usage = Σ text.length + 20/fact). Overflow rejects with current entries + a consolidate instruction. `memory_retain` supports an atomic `operations[]` batch (add/replace/remove by unique substring, all-or-nothing); `memory_recall` searches project facts; `memory_reflect` is heuristic + optional utility-model synthesis. When auto-inject is on, top-K facts go into the system prompt via `appendSystemPromptOverride` in `startRpcSession` — the selection owner is `selectMemoryInjectFacts` (top-K + maxInjectChars), and its picks are frozen on the wrapper as `injectedMemoryFacts`. Per-prompt, `send("prompt")` recalls query-relevant facts (`buildQueryMemoryContext`, ≤800 chars, deduped against that frozen snapshot, never the live store) and injects them plus the agent-mode brief as **ephemeral state-only messages** (`lib/ephemeral-context.ts` → direct `agent.state.messages` push, at most one entry per customType, replaced in place). **MUST NOT** route these through `sendCustomMessage({ deliverAs: "nextTurn" })` — the SDK persists queued custom messages into the .jsonl and replays them as user messages forever. `startRpcSession` prunes any such legacy persisted blocks from freshly loaded context. API: `POST /api/project-memory` with `{ action: "reflect" }`.
+- **Background memory review** (`lib/memory-review.ts` + `POST /api/memory-review`): ChatWindow fires it fire-and-forget after every agent-end; a per-session counter (`globalThis.__raincodeMemoryReviewTurnCounts`, resets on restart) runs the actual review only every 10th user turn. The store cwd comes from the session file's own header (the caller's cwd can race a session switch). A full store short-circuits with `budget-full` before the model call. One utility-model JSON completion (smol → plan → default role chain) over the last ~10 transcript snippets (~6KB); validated facts are written via `retainMemoryFact` (secret guard / dedupe / budget are the safety net). Saved facts surface as a subtle info notice.
 
 ### SSE reconnect on page refresh mid-stream
 On `ChatWindow` mount, `GET /api/agent/[id]` is called. If `state.isStreaming === true`, SSE is reconnected automatically. `thinkingLevel` and `isCompacting` are also synced from this response.

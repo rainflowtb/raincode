@@ -48,6 +48,31 @@ contextBridge.exposeInMainWorld("raincodeDesktop", {
       ipcRenderer.removeListener("raincode-desktop:window-state", handler);
     };
   },
+  /**
+   * Built-in browser panel. Views are WebContentsView instances owned by the
+   * main process; rect is CSS px (== DIPs, no scaling). State pushes arrive on
+   * "raincode-desktop:browser-state".
+   */
+  browser: {
+    attach: (viewId, rect, radius) => ipcRenderer.invoke("raincode-desktop:browser", { op: "attach", viewId, rect, radius }),
+    detach: () => ipcRenderer.invoke("raincode-desktop:browser", { op: "detach" }),
+    setBounds: (rect) => ipcRenderer.invoke("raincode-desktop:browser", { op: "setBounds", rect }),
+    navigate: (viewId, url) => ipcRenderer.invoke("raincode-desktop:browser", { op: "navigate", viewId, url }),
+    goBack: (viewId) => ipcRenderer.invoke("raincode-desktop:browser", { op: "goBack", viewId }),
+    goForward: (viewId) => ipcRenderer.invoke("raincode-desktop:browser", { op: "goForward", viewId }),
+    reload: (viewId) => ipcRenderer.invoke("raincode-desktop:browser", { op: "reload", viewId }),
+    getState: (viewId) => ipcRenderer.invoke("raincode-desktop:browser", { op: "getState", viewId }),
+    list: (viewId) => ipcRenderer.invoke("raincode-desktop:browser", { op: "list", viewId }),
+    close: (viewId) => ipcRenderer.invoke("raincode-desktop:browser", { op: "close", viewId }),
+    onStateChange: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, state) => callback(state);
+      ipcRenderer.on("raincode-desktop:browser-state", handler);
+      return () => {
+        ipcRenderer.removeListener("raincode-desktop:browser-state", handler);
+      };
+    },
+  },
   isDesktop: true,
   platform: process.platform,
 });

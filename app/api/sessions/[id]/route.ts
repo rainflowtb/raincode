@@ -12,9 +12,9 @@ import {
 } from "@/lib/session-reader";
 import {
   buildSessionContext,
+  buildUsageMessages,
   getSessionManager,
   getSessionEntries,
-  restoreDeferredMessages,
 } from "@/lib/session-entries";
 import { estimateSessionContextUsage } from "@/lib/context-usage";
 import { getRpcSession } from "@/lib/rpc-registry";
@@ -170,12 +170,12 @@ export async function GET(
     } : null;
 
     // Cold open has no live AgentSession — estimate usage from the file so the
-    // context ring/panel don't show 0% until the next reply.
+    // context ring/panel don't show 0% until the next reply. Usage reflects
+    // what the API actually sees after compaction, not the full-history UI
+    // transcript (and never the deferred thinking/media).
     let contextUsage: Awaited<ReturnType<typeof estimateSessionContextUsage>> = null;
     try {
-      const usageMessages = (deferThinking || deferToolResultImages)
-        ? restoreDeferredMessages(context, entries)
-        : context.messages;
+      const usageMessages = buildUsageMessages(entries, leafId);
       contextUsage = await estimateSessionContextUsage({
         cwd: header?.cwd ?? process.cwd(),
         model: context.model,

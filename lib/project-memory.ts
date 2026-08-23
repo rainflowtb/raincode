@@ -190,9 +190,21 @@ function cleanFactText(text: string, maxFactChars: number): string {
   return text.replace(/\s+/g, " ").trim().slice(0, maxFactChars);
 }
 
-// Soft secret guard
+// Soft secret guard — one owner for every write path (tool, review, settings UI).
+const SECRET_PATTERNS: RegExp[] = [
+  /(api[_-]?key|secret|password|token)\s*[:=]/i, // key: value / key = value phrasing
+  /sk-[a-zA-Z0-9]{10,}/, // OpenAI-style keys
+  /ghp_[a-zA-Z0-9]{20,}/, // GitHub PAT
+  /github_pat_[a-zA-Z0-9_]{20,}/, // GitHub fine-grained PAT
+  /gh[ousr]_[a-zA-Z0-9]{20,}/, // GitHub OAuth / user-to-server / refresh tokens
+  /AKIA[0-9A-Z]{16}/, // AWS access key id
+  /xox[baprs]-[a-zA-Z0-9-]{10,}/, // Slack tokens
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private key blocks
+  /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/, // JWTs
+];
+
 function assertNoSecrets(text: string): void {
-  if (/(api[_-]?key|secret|password|token)\s*[:=]/i.test(text) || /sk-[a-zA-Z0-9]{10,}/.test(text)) {
+  if (SECRET_PATTERNS.some((pattern) => pattern.test(text))) {
     throw new Error("Refusing to store possible secrets in project memory");
   }
 }
@@ -476,29 +488,42 @@ export function recallMemoryFacts(
     .map((s) => s.fact);
 }
 
+const INJECT_HEADER_LINES = [
+  "## Project memory (auto-loaded)",
+  "Durable facts about this project. Prefer these over re-discovering the same conventions.",
+  "",
+];
+
+/**
+ * Facts selected for the system-prompt auto-inject block (top-K under the char
+ * budget). Single selection owner: buildMemoryInjectBlock renders them, and the
+ * session-start code freezes their texts as the recall-dedupe snapshot.
+ */
+export function selectMemoryInjectFacts(
+  cwd: string,
+  settings?: ProjectMemorySettings | WebSettings["projectMemory"],
+): MemoryFact[] {
+  const mem = getProjectMemorySettings(settings);
+  // Prompt ownership: never inject unless pi-web settings explicitly allow it.
+  if (!memoryAutoInjectEnabled(mem)) return [];
+  const picked: MemoryFact[] = [];
+  let used = INJECT_HEADER_LINES.join("\n").length;
+  for (const fact of listMemoryFacts(cwd).slice(0, mem.autoInjectTopK)) {
+    const line = `- ${fact.text}`;
+    if (used + line.length + 1 > mem.maxInjectChars) break;
+    picked.push(fact);
+    used += line.length + 1;
+  }
+  return picked;
+}
+
 export function buildMemoryInjectBlock(
   cwd: string,
   settings?: ProjectMemorySettings | WebSettings["projectMemory"],
 ): string | null {
-  const mem = getProjectMemorySettings(settings);
-  // Prompt ownership: never inject unless pi-web settings explicitly allow it.
-  if (!memoryAutoInjectEnabled(mem)) return null;
-
-  const facts = listMemoryFacts(cwd).slice(0, mem.autoInjectTopK);
+  const facts = selectMemoryInjectFacts(cwd, settings);
   if (facts.length === 0) return null;
-  const lines = [
-    "## Project memory (auto-loaded)",
-    "Durable facts about this project. Prefer these over re-discovering the same conventions.",
-    "",
-  ];
-  let used = lines.join("\n").length;
-  for (const fact of facts) {
-    const line = `- ${fact.text}`;
-    if (used + line.length + 1 > mem.maxInjectChars) break;
-    lines.push(line);
-    used += line.length + 1;
-  }
-  if (lines.length <= 3) return null;
+  const lines = [...INJECT_HEADER_LINES, ...facts.map((fact) => `- ${fact.text}`)];
 
   const guidance =
     "Use memory_retain to save durable project facts (environment, conventions, lessons — never secrets). " +

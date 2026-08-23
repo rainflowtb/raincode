@@ -67,6 +67,7 @@ export class NativeMcpRuntime {
   }
 
   async status(): Promise<string> {
+    this.pruneStaleServers();
     const configured = this.listConfigured();
     if (configured.length === 0) return "No MCP servers configured.";
     const lines = configured.map((item) => {
@@ -79,6 +80,7 @@ export class NativeMcpRuntime {
   }
 
   async listTools(server?: string): Promise<McpToolInfo[]> {
+    this.pruneStaleServers();
     await this.connect(server);
     const out: McpToolInfo[] = [];
     for (const live of this.servers.values()) {
@@ -89,6 +91,7 @@ export class NativeMcpRuntime {
   }
 
   findTool(toolName: string, server?: string): McpToolInfo | undefined {
+    this.pruneStaleServers();
     const matches: McpToolInfo[] = [];
     for (const live of this.servers.values()) {
       if (server && live.name !== server) continue;
@@ -154,6 +157,23 @@ export class NativeMcpRuntime {
       }
     }
     this.servers.clear();
+  }
+
+  /**
+   * Live connections must not outlive the config that authorized them: a server
+   * disabled or deleted mid-session is evicted here, before any tool lookup or
+   * call, so the agent cannot keep invoking it until the next /reload.
+   */
+  private pruneStaleServers(): void {
+    const configured = listMcpServers(this.cwd);
+    for (const [name, live] of this.servers) {
+      const entry = configured.find((item) => item.name === name);
+      if (entry && !entry.disabled) continue;
+      this.servers.delete(name);
+      void live.client.close().catch(() => {
+        // connection is already dropped from the map; close is best-effort
+      });
+    }
   }
 
   private async connectOne(name: string, config: McpServerEntry): Promise<string> {
