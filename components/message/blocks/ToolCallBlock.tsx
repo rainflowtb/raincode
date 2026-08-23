@@ -679,7 +679,9 @@ export function getEditResultMeta(result: ToolResultMessage): { mode?: string; m
   if (tag) tag = tag.replace(/^#/, "").toUpperCase();
 
   const modeLabel =
-    mode === "hashline-patch" ? "hashline"
+    mode === "literal" ? "edit"
+      // Legacy modes below render old hashline-era transcripts.
+      : mode === "hashline-patch" ? "hashline"
       : mode === "hashline-hunks" ? "hunks"
         : mode === "classic-via-hashline" ? "strict"
           : mode === "classic-fuzzy" ? "classic"

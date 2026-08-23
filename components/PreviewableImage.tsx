@@ -4,6 +4,7 @@ import { useEffect, useId, useState, type CSSProperties, type MouseEvent } from 
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { Icon } from "./Icon";
+import { useApiObjectUrl } from "@/hooks/useApiObjectUrl";
 
 interface PreviewableImageProps {
   src: string;
@@ -28,6 +29,9 @@ export function PreviewableImage({
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const titleId = useId();
+  // `/api/…` srcs (local files referenced from markdown) need the blob bridge —
+  // element srcs have no HTTP origin in the desktop client.
+  const { url: resolvedSrc } = useApiObjectUrl(src || null);
 
   useEffect(() => {
     setMounted(true);
@@ -54,7 +58,7 @@ export function PreviewableImage({
     };
   }, [open]);
 
-  if (!src) return null;
+  if (!src || !resolvedSrc) return null;
 
   const openPreview = (event: MouseEvent) => {
     event.preventDefault();
@@ -70,7 +74,7 @@ export function PreviewableImage({
     <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         loading="lazy"
         className={["previewable-image", className].filter(Boolean).join(" ")}
@@ -109,7 +113,7 @@ export function PreviewableImage({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             className="image-preview-fullscreen-img"
-            src={src}
+            src={resolvedSrc}
             alt={alt}
             onClick={(event) => event.stopPropagation()}
             draggable={false}

@@ -1,6 +1,6 @@
 /**
  * Single owner for post-edit parse checks on JS/TS sources.
- * Cheap syntax only (not full tsc typecheck). Hashline/edit call this
+ * Cheap syntax only (not full tsc typecheck). The edit engine calls this
  * before treating a write as success so "applied" never means "unparsable".
  *
  * Invariant: only hard-reject when a real parser (typescript) confirms the
@@ -240,7 +240,8 @@ export function formatSyntaxGuardFailure(
     `The file was not modified.\n` +
     `Parse errors:\n${lines}\n` +
     excerpt +
-    `Re-read the file. Leftover tail usually means SWAP N.=M ended before the construct closer — use SWAP.BLK N: or widen M.\n` +
-    `Opener and closer of a wrap must be in the SAME patch. Shrink to one hunk / one concern, ensure body lines start with '+', and retry.`
+    `Re-read the file, then retry with the exact current text. ` +
+    `Replace a whole construct (opener through closer) in a single oldText/newText pair — ` +
+    `partial wraps leave orphaned braces.`
   );
 }

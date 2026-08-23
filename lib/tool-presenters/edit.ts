@@ -2,7 +2,7 @@
 import { patchFromToolDetails, type ToolPresenter } from "../tool-presentation";
 import { isRecord } from "../type-guards";
 
-/** Same shape as hashline-parse SECTION_RE — whole-line header only, no op parse. */
+/** Whole-line [path#TAG] header from legacy hashline-era tool calls (old transcripts). */
 const HASHLINE_HEADER_RE = /^\[(.+?)#([0-9A-Fa-f]{4})\]\s*$/gm;
 
 function pathsFromHashlineInput(input: string): string[] {

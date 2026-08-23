@@ -24,7 +24,10 @@ export function readModelsJson(): ReadResult {
   if (!existsSync(path)) return { ok: true, data: { providers: {} } };
   try {
     const data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-    return { ok: true, data };
+    // Normalize in-memory too: older files written before the developer-role
+    // compat migration may omit supportsDeveloperRole:false, causing pi-ai's
+    // URL auto-detection to send role:"developer" to gateways that reject it.
+    return { ok: true, data: normalizeModelsJson(data) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -103,7 +106,14 @@ export function upsertProvider(name: string, entry: ProviderEntry): UpsertResult
     data.providers && typeof data.providers === "object" && !Array.isArray(data.providers)
       ? { ...(data.providers as Record<string, unknown>) }
       : {};
-  providers[trimmed] = stripProviderLegacyBilling(entry);
+  const stripped = stripProviderLegacyBilling(entry);
+  // Apply the same developer-role compat normalization as a full-file PUT.
+  // The provider PATCH path is the main save route from the settings UI;
+  // without this, newly added custom OpenAI-compatible providers can still
+  // send role:"developer" to gateways that only accept system/user/assistant/tool.
+  providers[trimmed] = normalizeDeveloperRoleCompat({
+    providers: { [trimmed]: stripped },
+  }).providers[trimmed] as ProviderEntry;
   data.providers = providers;
   writeModelsJson(data);
   return { ok: true };

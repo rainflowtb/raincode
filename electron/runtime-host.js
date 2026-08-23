@@ -210,12 +210,19 @@ function registerApiBridge(ipcMain) {
   // Without this an aborted fetch — a superseded session load, a sidebar poll
   // cancelled on unmount — keeps running in the runtime and its work piles up
   // behind whatever the user is actually waiting for.
+  //
+  // Resolve rather than reject: the abort channel is only ever fired by the
+  // renderer that owns this requestId (from its own AbortSignal), and that
+  // renderer already threw AbortError locally — the IPC reply is unobservable.
+  // Rejecting would surface as "Error occurred in handler for
+  // 'raincode-api:request'" log noise with no listener on the other end.
+  const ABORTED_REPLY = { status: 499, headers: {}, body: "" };
   ipcMain.on(ABORT_CHANNEL, (_event, payload) => {
     const id = payload?.requestId;
     const waiter = pending.get(id);
     if (!waiter) return;
     pending.delete(id);
-    waiter.reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+    waiter.resolve(ABORTED_REPLY);
     try {
       sendToRuntime(waiter.role, { t: "abort", id });
     } catch {
@@ -223,20 +230,31 @@ function registerApiBridge(ipcMain) {
     }
   });
 
+  // One "destroyed" listener per WebContents, no matter how many SSE streams it
+  // opens — a per-stream listener trips MaxListenersExceededWarning at 11.
+  const streamedSenders = new Set();
+
   ipcMain.on(STREAM_OPEN_CHANNEL, (event, payload) => {
     const id = newId();
     const role = roleForPath(payload?.path);
     streams.set(id, { webContents: event.sender, streamId: payload?.streamId, role });
     // Renderer reloads leave orphaned streams; drop them with their window.
-    event.sender.once("destroyed", () => {
-      if (streams.delete(id)) {
-        try {
-          sendToRuntime(role, { t: "abort", id });
-        } catch {
-          // runtime already gone
+    if (!streamedSenders.has(event.sender)) {
+      streamedSenders.add(event.sender);
+      const sender = event.sender;
+      sender.once("destroyed", () => {
+        streamedSenders.delete(sender);
+        for (const [sid, stream] of streams) {
+          if (stream.webContents !== sender) continue;
+          streams.delete(sid);
+          try {
+            sendToRuntime(stream.role, { t: "abort", id: sid });
+          } catch {
+            // runtime already gone
+          }
         }
-      }
-    });
+      });
+    }
     try {
       sendToRuntime(role, {
         t: "req",

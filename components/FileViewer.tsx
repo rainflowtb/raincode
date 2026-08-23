@@ -27,10 +27,12 @@ import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins } from "@/li
 import { DiffView, FILE_CODE_STYLE, FILE_LINE_NUMBER_STYLE } from "./DiffView";
 import { Icon } from "./Icon";
 import { FileEditor } from "./FileEditor";
-import { AtSign, Download, Pencil, WrapText, X } from "lucide-react";
+import { AtSign, Pencil, WrapText, X } from "lucide-react";
 import type { CodeThemeId } from "@/lib/web-settings";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { apiFetch, apiStream, type ApiStream } from "@/lib/api-transport";
+import { useApiObjectUrl } from "@/hooks/useApiObjectUrl";
+import { ApiImage, FileDownloadButton } from "./api-file-media";
 
 interface Props {
   filePath: string;
@@ -296,17 +298,11 @@ function getFileApiUrl(
 }
 
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
-  const { t } = useLocale();
   return (
-    <a
-      href={getFileApiUrl(filePath, "download", sourceSessionId)}
-      download={getFileName(filePath)}
-      title={t("viewer.download")}
-      aria-label={t("viewer.download")}
-      className="file-viewer-icon-button"
-    >
-      <Icon icon={Download} size={14} strokeWidth={2.2} />
-    </a>
+    <FileDownloadButton
+      apiUrl={getFileApiUrl(filePath, "download", sourceSessionId)}
+      fileName={getFileName(filePath)}
+    />
   );
 }
 
@@ -330,7 +326,10 @@ function ImageViewer({
     setError(null);
   }, [filePath, sourceSessionId]);
 
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const apiUrl = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const media = useApiObjectUrl(apiUrl);
+  const src = media.url;
+  const shownError = error ?? media.error;
 
   const formatSizeStr = size != null ? formatSize(size) : null;
 
@@ -388,25 +387,27 @@ function ImageViewer({
           backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px",
         }}
       >
-        {error ? (
-          <div style={{ color: "var(--destructive)", fontSize: 13 }}>{error}</div>
+        {shownError ? (
+          <div style={{ color: "var(--destructive)", fontSize: 13 }}>{shownError}</div>
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={src}
-            alt={filePath}
-            onLoad={(e) => {
-              const img = e.currentTarget;
-              setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-            }}
-            onError={() => setError(t("viewer.failedImage"))}
-            style={{
-              maxWidth: "100%",
-              maxHeight: "100%",
-              objectFit: "contain",
-              boxShadow: "var(--shadow-md)",
-            }}
-          />
+          src && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={filePath}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+              }}
+              onError={() => setError(t("viewer.failedImage"))}
+              style={{
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                boxShadow: "var(--shadow-md)",
+              }}
+            />
+          )
         )}
       </div>
     </div>
@@ -435,7 +436,10 @@ function AudioViewer({
     setError(null);
   }, [filePath, sourceSessionId, bust]);
 
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const apiUrl = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const media = useApiObjectUrl(apiUrl);
+  const src = media.url;
+  const shownError = error ?? media.error;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -487,20 +491,22 @@ function AudioViewer({
         }}
       >
         <div style={{ width: "min(680px, 100%)" }}>
-          {error && (
+          {shownError && (
             <div style={{ color: "var(--destructive)", fontSize: 13, marginBottom: 12, textAlign: "center" }}>
-              {error}
+              {shownError}
             </div>
           )}
-          <audio
-            key={src}
-            controls
-            preload="metadata"
-            src={src}
-            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onError={() => setError(t("viewer.failedAudio"))}
-            style={{ width: "100%" }}
-          />
+          {src && (
+            <audio
+              key={src}
+              controls
+              preload="metadata"
+              src={src}
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onError={() => setError(t("viewer.failedAudio"))}
+              style={{ width: "100%" }}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -518,9 +524,12 @@ function DocumentViewer({
 
   const ext = getFileExt(filePath);
   const isPdf = ext === "pdf";
-  const previewUrl = isPdf
+  const previewApiUrl = isPdf
     ? getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined)
     : getFileApiUrl(filePath, "preview", sourceSessionId, bust ? { v: bust } : undefined);
+  const media = useApiObjectUrl(previewApiUrl);
+  const previewUrl = media.url;
+  const shownError = error ?? media.error;
 
   useEffect(() => {
     const requestId = ++metaRequestRef.current;
@@ -591,19 +600,29 @@ function DocumentViewer({
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, background: "var(--bg-panel)" }}>
-        {error ? (
+        {shownError ? (
           <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "var(--destructive)", fontSize: 13, textAlign: "center" }}>
-            {error}
+            {shownError}
           </div>
-        ) : (
-          <iframe
-            key={previewUrl}
-            src={previewUrl}
-            sandbox={isPdf ? undefined : ""}
-            title={`Preview ${getFileName(filePath)}`}
-            style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "var(--bg-panel)" }}
-          />
-        )}
+        ) : previewUrl ? (
+          isPdf ? (
+            <embed
+              key={previewUrl}
+              src={previewUrl}
+              type="application/pdf"
+              title={`Preview ${getFileName(filePath)}`}
+              style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
+            />
+          ) : (
+            <iframe
+              key={previewUrl}
+              src={previewUrl}
+              sandbox=""
+              title={`Preview ${getFileName(filePath)}`}
+              style={{ width: "100%", height: "100%", border: "none", background: "var(--bg-panel)" }}
+            />
+          )
+        ) : null}
       </div>
     </div>
   );
@@ -1115,10 +1134,9 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
                     : null;
                   const imageSrc = imagePath
                     ? getFileApiUrl(imagePath, "read", sourceSessionId)
-                    : src;
-                  // Dynamic local paths are served directly by the file API.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
+                    : typeof src === "string" ? src : undefined;
+                  // Local paths load through the blob bridge (no HTTP origin in desktop).
+                  return <ApiImage src={imageSrc} alt={alt ?? ""} className={props.className} style={props.style} />;
                 },
               }}
             >
