@@ -11,13 +11,35 @@
  * One owner: this module is the only place that creates/positions thumbs.
  * Containers opt in with the `data-overlay-scroll` attribute; discovery and
  * cleanup run through a single MutationObserver started by initOverlayScrollbars().
+ *
+ * `data-overlay-scroll="gutter"` parks the thumb just right of the container's
+ * edge (desktop layout only). Used by the session sidebar: its rows paint flush
+ * to the right edge and the sidebar stacking context (z 200) covers the
+ * body-level thumb (z 65), so the thumb lives in the 8px seam gutter instead.
+ *
+ * `data-overlay-scroll-inset-bottom="<px>"` / `data-overlay-scroll-inset-top="<px>"`
+ * shorten the thumb's track so it stays inside the visible region of containers
+ * whose edges are covered or clipped: the chat composer floats over the
+ * transcript's tail, and the shell panel's 16px rounded corners cut into the
+ * track's top-right corner.
  */
 
 const SCROLL_ATTR = "data-overlay-scroll";
+const INSET_BOTTOM_ATTR = "data-overlay-scroll-inset-bottom";
+const INSET_TOP_ATTR = "data-overlay-scroll-inset-top";
 const HIDE_DELAY_MS = 900;
 const MIN_THUMB_PX = 24;
 const THUMB_WIDTH_PX = 4;
 const THUMB_INSET_PX = 2;
+const GUTTER_GAP_PX = 2;
+
+// Matches the desktop sidebar media query in globals.css — the seam gutter only
+// exists there; on mobile the gutter mode falls back to inside placement.
+let desktopMedia: MediaQueryList | null = null;
+function isDesktopLayout(): boolean {
+  desktopMedia ??= window.matchMedia("(min-width: 641px)");
+  return desktopMedia.matches;
+}
 
 interface Attachment {
   el: HTMLElement;
@@ -68,11 +90,21 @@ function attach(el: HTMLElement): Attachment {
         setVisible(false);
         return;
       }
-      const thumbH = Math.max(MIN_THUMB_PX, (rect.height * el.clientHeight) / el.scrollHeight);
-      const travel = rect.height - thumbH;
-      const top = rect.top + (el.scrollTop / overflow) * travel;
+      const insetBottom = Number(el.getAttribute(INSET_BOTTOM_ATTR)) || 0;
+      const insetTop = Number(el.getAttribute(INSET_TOP_ATTR)) || 0;
+      const trackTop = rect.top + insetTop;
+      const trackH = rect.height - insetTop - insetBottom;
+      if (trackH <= MIN_THUMB_PX) {
+        setVisible(false);
+        return;
+      }
+      const thumbH = Math.max(MIN_THUMB_PX, (trackH * el.clientHeight) / el.scrollHeight);
+      const travel = trackH - thumbH;
+      const top = trackTop + (el.scrollTop / overflow) * travel;
+      const inGutter = el.getAttribute(SCROLL_ATTR) === "gutter" && isDesktopLayout();
+      const left = inGutter ? rect.right + GUTTER_GAP_PX : rect.right - THUMB_WIDTH_PX - THUMB_INSET_PX;
       thumb.style.top = `${Math.round(top)}px`;
-      thumb.style.left = `${Math.round(rect.right - THUMB_WIDTH_PX - THUMB_INSET_PX)}px`;
+      thumb.style.left = `${Math.round(left)}px`;
       thumb.style.height = `${Math.round(thumbH)}px`;
       if (hovered || dragging) setVisible(true);
     });
@@ -104,7 +136,10 @@ function attach(el: HTMLElement): Attachment {
     const startScroll = el.scrollTop;
     const rect = el.getBoundingClientRect();
     const thumbH = thumb.getBoundingClientRect().height;
-    const ratio = (el.scrollHeight - el.clientHeight) / Math.max(1, rect.height - thumbH);
+    const trackH = rect.height
+      - (Number(el.getAttribute(INSET_TOP_ATTR)) || 0)
+      - (Number(el.getAttribute(INSET_BOTTOM_ATTR)) || 0);
+    const ratio = (el.scrollHeight - el.clientHeight) / Math.max(1, trackH - thumbH);
     const onMove = (ev: PointerEvent) => {
       el.scrollTop = startScroll + (ev.clientY - startY) * ratio;
     };
@@ -175,6 +210,10 @@ export function initOverlayScrollbars(): void {
     for (const mutation of mutations) {
       if (mutation.type === "attributes" && mutation.target instanceof HTMLElement) {
         const el = mutation.target;
+        if (mutation.attributeName === INSET_BOTTOM_ATTR || mutation.attributeName === INSET_TOP_ATTR) {
+          attachments.get(el)?.update();
+          continue;
+        }
         if (el.hasAttribute(SCROLL_ATTR)) {
           if (!attachments.has(el)) attach(el);
         } else {
@@ -196,6 +235,6 @@ export function initOverlayScrollbars(): void {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: [SCROLL_ATTR],
+    attributeFilter: [SCROLL_ATTR, INSET_BOTTOM_ATTR, INSET_TOP_ATTR],
   });
 }

@@ -1063,7 +1063,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       </div>
 
       {/* Session list */}
-      <div data-overlay-scroll style={{ flex: "1 1 auto", overflowY: "auto", padding: "4px 0", minHeight: 80 }}>
+      <div data-overlay-scroll="gutter" style={{ flex: "1 1 auto", overflowY: "auto", padding: "4px 0", minHeight: 80 }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("common.loading")}

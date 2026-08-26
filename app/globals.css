@@ -362,7 +362,9 @@ body {
 /* Floating thumb drawn by lib/overlay-scrollbars.ts.
    MUST stay below the sidebar stacking context (.sidebar-container is z 200):
    cursor-anchored menus (SessionItemMenu, FileExplorerContextMenu) render
-   inline inside the sidebar, so a thumb above 200 paints over them. */
+   inline inside the sidebar, so a thumb above 200 paints over them. Because of
+   this the sidebar's session list uses data-overlay-scroll="gutter" — its
+   flush-right selected rows would otherwise hide the thumb. */
 .overlay-scrollbar-thumb {
   position: fixed;
   width: 4px;

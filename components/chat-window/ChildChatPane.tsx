@@ -69,6 +69,8 @@ export function ChildChatPane({
           <div
             ref={stream.bindScrollContainer}
             data-overlay-scroll
+            data-overlay-scroll-inset-top={12}
+            data-overlay-scroll-inset-bottom={140}
             className="chat-scroll-area h-full overflow-y-auto pt-4"
             style={{ paddingBottom: 140 }}
           >
