@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/hooks/useLocale";
 import {
@@ -15,24 +15,6 @@ import { Icon } from "./Icon";
 import { useChildTranscript } from "@/lib/child-transcript-store";
 
 const TODO_KEY = "todos";
-
-const TEXT_TRIGGER_STYLE: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-  height: 26,
-  padding: "0 10px",
-  border: "none",
-  borderRadius: "var(--radius-pill)",
-  background: "transparent",
-  color: "var(--text-muted)",
-  fontSize: 12,
-  fontWeight: 400,
-  lineHeight: "18px",
-  cursor: "pointer",
-  whiteSpace: "nowrap",
-  flexShrink: 0,
-};
 
 function capsuleCount(key: string, lines: string[]): number {
   const parsed = parseWidget(key, lines);
@@ -241,11 +223,10 @@ export function TopBarChromeWidgets({ parentSessionId }: { parentSessionId?: str
             aria-expanded={todoOpen}
             aria-haspopup="dialog"
             style={{
-              ...TEXT_TRIGGER_STYLE,
               background: todoOpen ? "var(--bg-hover)" : "transparent",
             }}
           >
-            {todoLabel}
+            <span className="topbar-capsule-label">{todoLabel}</span>
             <Icon
               icon={ChevronDown}
               size={12}
@@ -283,11 +264,10 @@ export function TopBarChromeWidgets({ parentSessionId }: { parentSessionId?: str
               aria-expanded={open}
               aria-haspopup="dialog"
               style={{
-                ...TEXT_TRIGGER_STYLE,
                 background: open ? "var(--bg-hover)" : "transparent",
               }}
             >
-              {label}
+              <span className="topbar-capsule-label">{label}</span>
               <Icon
                 icon={ChevronDown}
                 size={12}

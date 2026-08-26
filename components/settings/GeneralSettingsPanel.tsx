@@ -4,8 +4,9 @@
 
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocale } from "@/hooks/useLocale";
+import { getDesktopLan, type LanServerState } from "@/lib/desktop-lan";
 import { SettingsToggle } from "../SettingsToggle";
 import {
   SegmentedOption,
@@ -23,6 +24,8 @@ export type GeneralPrefs = {
   disableHardwareAcceleration: boolean;
   autoCheckUpdates: boolean;
   autoDownloadUpdates: boolean;
+  lanAccessEnabled: boolean;
+  lanAccessKey: string;
 };
 
 export type GeneralUpdateStatus =
@@ -35,6 +38,7 @@ export type GeneralUpdateStatus =
 export function GeneralSettingsPanel({
   prefs,
   onTerminalFont,
+  onLanAccessKey,
   patchPref,
   isDesktop,
   restartHint,
@@ -46,6 +50,7 @@ export function GeneralSettingsPanel({
 }: {
   prefs: GeneralPrefs;
   onTerminalFont: (value: string) => void;
+  onLanAccessKey: (value: string) => void;
   patchPref: (patch: Record<string, unknown>, opts?: { restart?: boolean }) => void | Promise<void>;
   isDesktop: boolean;
   restartHint: boolean;
@@ -56,6 +61,34 @@ export function GeneralSettingsPanel({
   saveErrorBlock: ReactNode;
 }) {
   const { t, locale, setLocale } = useLocale();
+  const [lanState, setLanState] = useState<LanServerState | null>(null);
+  const [lanCopiedUrl, setLanCopiedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getDesktopLan()?.lanGetState().then((s) => {
+      if (!cancelled && s) setLanState(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Re-read the settings file in the main process and start/stop the server.
+  const applyLan = async () => {
+    const lan = getDesktopLan();
+    if (lan) setLanState(await lan.lanApply());
+  };
+
+  const copyLanUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setLanCopiedUrl(url);
+      window.setTimeout(() => setLanCopiedUrl((v) => (v === url ? null : v)), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
 
   return (
     <>
@@ -186,6 +219,79 @@ export function GeneralSettingsPanel({
               />
             }
           />
+        </SettingsGroup>
+      )}
+
+      {isDesktop && (
+        <SettingsGroup title={t("settings.lanSection")}>
+          <SettingsRow
+            title={t("settings.lanAccess")}
+            description={t("settings.lanAccessDesc")}
+            action={
+              <SettingsToggle
+                enabled={prefs.lanAccessEnabled}
+                onChange={(next) => void Promise.resolve(patchPref({ lanAccessEnabled: next })).then(applyLan)}
+              />
+            }
+          />
+          {prefs.lanAccessEnabled && (
+            <>
+              <SettingsRow
+                stacked
+                title={t("settings.lanKey")}
+                description={t("settings.lanKeyDesc")}
+                action={
+                  <input
+                    type="password"
+                    className="input-base input-mono"
+                    value={prefs.lanAccessKey}
+                    placeholder={t("settings.lanKeyPlaceholder")}
+                    autoComplete="off"
+                    onChange={(e) => onLanAccessKey(e.target.value)}
+                    onBlur={() => void Promise.resolve(patchPref({ lanAccessKey: prefs.lanAccessKey })).then(applyLan)}
+                    style={{ width: "100%" }}
+                  />
+                }
+              />
+              {!prefs.lanAccessKey.trim() && (
+                <div style={{ padding: "0 14px 10px", fontSize: 12, color: "var(--destructive)" }}>
+                  {t("settings.lanKeyWarnEmpty")}
+                </div>
+              )}
+              {lanState?.error && (
+                <div style={{ padding: "0 14px 10px", fontSize: 12, color: "var(--destructive)" }}>
+                  {lanState.error === "port-busy"
+                    ? t("settings.lanPortBusy", { port: String(lanState.port) })
+                    : `${t("settings.lanError")}: ${lanState.error}`}
+                </div>
+              )}
+              {lanState?.running && (
+                <SettingsRow
+                  stacked
+                  title={t("settings.lanUrls")}
+                  description={t("settings.lanUrlsDesc")}
+                  action={
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                      {lanState.urls.map((url) => (
+                        <div key={url} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <code style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 12, wordBreak: "break-all" }}>
+                            {url}
+                          </code>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-compact"
+                            onClick={() => void copyLanUrl(url)}
+                          >
+                            {lanCopiedUrl === url ? t("common.copied") : t("common.copy")}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              )}
+            </>
+          )}
         </SettingsGroup>
       )}
 

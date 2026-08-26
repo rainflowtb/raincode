@@ -46,6 +46,8 @@ type ScalarSettingKey =
   | "disableHardwareAcceleration"
   | "autoCheckUpdates"
   | "autoDownloadUpdates"
+  | "lanAccessEnabled"
+  | "lanAccessKey"
   | "advisorEnabled";
 
 /** The `settings` field of a GET/PUT response, incl. server-formatted model refs. */

@@ -1116,7 +1116,7 @@ export function GitPanel({
       )}
 
       {(
-        <div className="git-panel-body" data-overlay-scroll style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <div className="git-panel-body" data-overlay-scroll data-overlay-scroll-inset-bottom={12} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           {allFiles.length === 0 ? (
             <div className="git-panel-clean">{t("git.clean")}</div>
           ) : (

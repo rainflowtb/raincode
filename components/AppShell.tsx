@@ -1085,6 +1085,19 @@ export function AppShell() {
             })}
             <div className="titlebar-drag" style={{ flex: 1, height: "100%" }} aria-hidden />
           </div>
+          {/* Mobile: the panel is full-width and the top bar's own toggle is
+              squeezed out — this is the only way back to chat (P0). */}
+          {isMobile && (
+            <button
+              type="button"
+              className="chrome-btn is-icon right-workspace-close titlebar-no-drag"
+              onClick={() => setRightPanelOpen(false)}
+              title={t("shell.hideFilePanel")}
+              aria-label={t("shell.hideFilePanel")}
+            >
+              <Icon icon={X} size={15} strokeWidth={1.8} />
+            </button>
+          )}
           {/* Right panel is the rightmost chrome when open — host caption buttons here. */}
           <WindowControls />
         </div>
@@ -1094,7 +1107,9 @@ export function AppShell() {
             flex: 1,
             minHeight: 0,
             width: "auto",
-            margin: "0 8px 8px 0",
+            // Mobile: the panel is full-width with no chat column on its left,
+            // so it needs the same 8px canvas gutter on both sides.
+            margin: isMobile ? "0 8px 8px" : "0 8px 8px 0",
             display: rightPanelOpen ? "flex" : "none",
             flexDirection: "column",
           }}
@@ -1169,7 +1184,7 @@ export function AppShell() {
                   <button
                     type="button"
                     className="chrome-btn is-icon"
-                    style={{ width: 24, minWidth: 24, height: 24, borderRadius: "var(--radius-sm)" }}
+                    style={{ width: isMobile ? 32 : 24, minWidth: isMobile ? 32 : 24, height: isMobile ? 32 : 24, borderRadius: "var(--radius-sm)" }}
                     onClick={() => rightExplorerRef.current?.openUploadPicker()}
                     disabled={explorerUploadBusy}
                     title={t("sidebar.uploadToRoot")}
@@ -1178,7 +1193,7 @@ export function AppShell() {
                     <Icon icon={Upload} size={13} strokeWidth={1.8} />
                   </button>
                 </div>
-                <div data-overlay-scroll style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+                <div data-overlay-scroll data-overlay-scroll-inset-bottom={12} style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
                   {terminalWatchCwd ? (
                     <FileExplorer
                       ref={rightExplorerRef}

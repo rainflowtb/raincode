@@ -195,19 +195,10 @@ export function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, for
               <button
                 onClick={copyContent}
                 title={t("msg.copyMessage")}
+                className="msg-action-btn"
                 style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "3px 8px", height: 22,
-                  background: "none", border: "none",
-                  borderRadius: "var(--radius-sm)",
-                  color: copied ? "var(--accent)" : "var(--text-dim)",
-                  cursor: "pointer",
-                  fontSize: 11, fontWeight: 400,
-                  whiteSpace: "nowrap",
-                  transition: "color 0.12s",
+                  color: copied ? "var(--accent)" : undefined,
                 }}
-                onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
-                onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
               >
                 {copied ? (
                   <Icon icon={Check} size={11} strokeWidth={1.8} />
@@ -231,19 +222,7 @@ export function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, for
                       setEditDialogOpen(true);
                     }}
                     title={t("msg.editFromHereTitle")}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 4,
-                      padding: "3px 8px", height: 22,
-                      background: "none", border: "none",
-                      borderRadius: "var(--radius-sm)",
-                      color: "var(--text-dim)",
-                      cursor: "pointer",
-                      fontSize: 11, fontWeight: 400,
-                      whiteSpace: "nowrap",
-                      transition: "color 0.12s",
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                    className="msg-action-btn"
                   >
                     <Icon icon={Undo2} size={11} strokeWidth={1.8} />
                     {t("msg.editFromHere")}
@@ -254,19 +233,10 @@ export function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, for
                     onClick={() => { onFork!(entryId!); }}
                     disabled={forking}
                     title={forking ? t("msg.creatingSession") : t("msg.newSessionTitle")}
+                    className="msg-action-btn"
                     style={{
-                      display: "flex", alignItems: "center", gap: 4,
-                      padding: "3px 8px", height: 22,
-                      background: "none", border: "none",
-                      borderRadius: "var(--radius-sm)",
-                      color: forking ? "var(--accent)" : "var(--text-dim)",
-                      cursor: forking ? "not-allowed" : "pointer",
-                      fontSize: 11, fontWeight: 400,
-                      whiteSpace: "nowrap",
-                      transition: "color 0.12s",
+                      color: forking ? "var(--accent)" : undefined,
                     }}
-                    onMouseEnter={(e) => { if (!forking) e.currentTarget.style.color = "var(--accent)"; }}
-                    onMouseLeave={(e) => { if (!forking) e.currentTarget.style.color = "var(--text-dim)"; }}
                   >
                     <Icon icon={GitBranch} size={11} strokeWidth={1.8} />
                     {forking ? t("msg.creating") : t("msg.newSession")}

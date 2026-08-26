@@ -1,0 +1,102 @@
+/**
+ * Mobile (≤640px) and coarse-pointer layout overrides.
+ *
+ * Single owner for small-screen adjustments: shell chrome hit targets, top-bar
+ * collapse tiers, touch-visible controls, and full-screen modal sheets. Base
+ * (desktop) styles stay in globals.css; this file only overrides. Loaded after
+ * globals.css from app/layout.tsx so equal-specificity rules win by order.
+ */
+
+/* ── Top bar container-query collapse (container: .app-topbar, globals.css) ──
+   Tiers: 900px hides chrome-btn text (globals.css); 720px drops capsule
+   labels; 560px drops the status capsules entirely so the right-panel toggle
+   is never squeezed out. */
+@container apptopbar (max-width: 720px) {
+  .topbar-capsule-label {
+    display: none;
+  }
+  .topbar-capsule {
+    padding: 0 8px;
+  }
+}
+@container apptopbar (max-width: 560px) {
+  .topbar-capsule {
+    display: none;
+  }
+  .app-topbar-actions .chrome-divider {
+    display: none;
+  }
+}
+
+/* ── Touch: controls that are hover-revealed on desktop stay visible ── */
+@media (hover: none) {
+  /* Sidebar toggle replaces the brand glyph outright — no hover swap. */
+  .brand-toggle-glyph {
+    display: none;
+  }
+  .brand-toggle-btn {
+    position: static;
+    opacity: 1;
+  }
+  /* Message action buttons: 32px touch targets (base 22px in globals.css). */
+  .msg-action-btn {
+    height: 32px;
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+}
+
+/* ── ≤640px: hit targets and panel chrome ── */
+@media (max-width: 640px) {
+  .app-topbar .chrome-btn {
+    height: 32px;
+    min-height: 32px;
+  }
+  .app-topbar .chrome-btn.is-icon {
+    width: 32px;
+    min-width: 32px;
+  }
+  /* Slot follows the 32px mobile icon button (base is 28px, globals.css). */
+  .brand-toggle-slot {
+    width: 32px;
+    height: 32px;
+  }
+  .topbar-capsule {
+    height: 32px;
+  }
+  .file-subtab {
+    height: 32px;
+  }
+  .file-subtab-close {
+    width: 24px;
+    height: 24px;
+  }
+  /* Drawer is a floating overlay: the desktop "flush right edge" row grammar
+     (the 8px gutter there comes from the chat wrapper) leaves rows touching
+     the drawer's right border. Restore the symmetric 6px inset. */
+  .sidebar-session-item {
+    margin-right: 6px;
+  }
+  /* Close affordance inside the full-width right workspace tab strip — the
+     top bar's own panel toggle is collapsed to 0 width on mobile (P0 fix).
+     The strip has no horizontal padding of its own, so restore the 8px right
+     gutter the shell uses everywhere else. */
+  .right-workspace-close {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    margin-right: 8px;
+    align-self: center;
+    flex-shrink: 0;
+  }
+  /* Full-screen sheets: ConfigPanelShell (Models/MCP/…) + FileViewerModal.
+     !important beats the inline width/max-height each modal sets for desktop. */
+  .modal-shell {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border: none;
+    border-radius: 0;
+  }
+}

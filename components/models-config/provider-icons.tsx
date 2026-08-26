@@ -33,7 +33,6 @@ import OpenCodeIcon from "@lobehub/icons/es/OpenCode/components/Mono";
 import XiaomiMiMoIcon from "@lobehub/icons/es/XiaomiMiMo/components/Mono";
 import ZAIIcon from "@lobehub/icons/es/ZAI/components/Mono";
 
-import { ATOMGIT_ICON_URL, ATOMGIT_PROVIDER_ID } from "@/lib/atomgit-constants";
 import { TOKENRHYTHM_ICON_URL, TOKENRHYTHM_PROVIDER_ID } from "@/lib/tokenrhythm-constants";
 
 export type IconComponent = React.ComponentType<{ size?: number | string; style?: React.CSSProperties }>;
@@ -95,7 +94,6 @@ export const PROVIDER_ICONS: Record<string, { Icon: IconComponent; hasColor: boo
 /** Local static brand marks for providers without a lobehub icon (or that need a specific raster mark). */
 export const PROVIDER_ICON_URLS: Record<string, string | ProviderRemoteIcon> = {
   [TOKENRHYTHM_PROVIDER_ID]: TOKENRHYTHM_ICON_URL,
-  [ATOMGIT_PROVIDER_ID]: { url: ATOMGIT_ICON_URL, paint: "image" },
   // Local brand marks (downloaded assets under public/providers/) — image paint keeps color.
   nous: {
     url: "/providers/nous.png",

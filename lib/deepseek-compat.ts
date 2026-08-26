@@ -1,7 +1,7 @@
 /**
  * DeepSeek thinking-mode compat for OpenAI-completions proxies.
  *
- * Native deepseek.com is auto-detected by pi-ai; AtomGit / TokenRhythm /
+ * Native deepseek.com is auto-detected by pi-ai; TokenRhythm /
  * OpenCode Zen / custom gateways are not. Without these flags, multi-turn
  * tool loops drop `reasoning_content` on assistant turns that had no
  * thinking block and upstream returns 400.

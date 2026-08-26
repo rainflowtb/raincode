@@ -184,11 +184,17 @@ function handleRuntimeMessage(message, proc, role) {
 
   const stream = streams.get(id);
   if (!stream) return;
-  if (stream.webContents.isDestroyed()) {
-    streams.delete(id);
-    return;
+  // Two sinks: renderer streams fan out over IPC to their WebContents;
+  // non-renderer callers (the LAN HTTP adapter) pass an onEvent callback.
+  if (stream.webContents) {
+    if (stream.webContents.isDestroyed()) {
+      streams.delete(id);
+      return;
+    }
+    stream.webContents.send(STREAM_EVENT_CHANNEL, { ...message, streamId: stream.streamId });
+  } else {
+    stream.onEvent?.(message);
   }
-  stream.webContents.send(STREAM_EVENT_CHANNEL, { ...message, streamId: stream.streamId });
   if (t === "end" || t === "err") streams.delete(id);
 }
 
@@ -248,22 +254,77 @@ function sendToRuntime(role, message) {
   });
 }
 
+/**
+ * Non-renderer entry into the same runtime protocol — used by the LAN HTTP
+ * adapter (electron/lan-server.js). Role classification, id allocation and the
+ * pending/streams maps stay here so the child protocol has exactly one owner.
+ *
+ * Buffered: resolves { status, headers, body(base64) }.
+ * Streaming (`stream: true`): events arrive via onEvent({ t:"open" | "chunk" |
+ * "end" | "err", ...}) with base64 chunks; close() aborts in the runtime.
+ *
+ * @param {{ id?: string, method?: string, path: string, headers?: Record<string, string>,
+ *           body?: string, bodyEncoding?: string, stream?: boolean,
+ *           onEvent?: (message: object) => void }} options
+ */
+function requestRuntime({ id, method, path, headers, body, bodyEncoding, stream, onEvent }) {
+  const reqId = id || newId();
+  const role = roleForPath(path);
+  if (stream) {
+    streams.set(reqId, { onEvent, role });
+    const close = () => {
+      if (!streams.delete(reqId)) return;
+      try {
+        sendToRuntime(role, { t: "abort", id: reqId });
+      } catch {
+        // runtime already gone
+      }
+    };
+    try {
+      sendToRuntime(role, {
+        t: "req",
+        id: reqId,
+        method: method || "GET",
+        path,
+        headers: headers || {},
+        body,
+        bodyEncoding,
+        stream: true,
+      });
+    } catch (error) {
+      streams.delete(reqId);
+      onEvent?.({
+        t: "err",
+        id: reqId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return { id: reqId, close };
+  }
+  const result = new Promise((resolve, reject) => pending.set(reqId, { resolve, reject, role }));
+  sendToRuntime(role, {
+    t: "req",
+    id: reqId,
+    method: method || "GET",
+    path,
+    headers: headers || {},
+    body,
+    bodyEncoding,
+  });
+  return result;
+}
+
 /** @param {Electron.IpcMain} ipcMain */
 function registerApiBridge(ipcMain) {
   ipcMain.handle(REQUEST_CHANNEL, async (_event, payload) => {
-    const id = payload?.requestId || newId();
-    const role = roleForPath(payload?.path);
-    const result = new Promise((resolve, reject) => pending.set(id, { resolve, reject, role }));
-    sendToRuntime(role, {
-      t: "req",
-      id,
+    return requestRuntime({
+      id: payload?.requestId,
       method: payload?.method || "GET",
       path: payload?.path,
       headers: payload?.headers || {},
       body: payload?.body,
       bodyEncoding: payload?.bodyEncoding,
     });
-    return result;
   });
 
   // Without this an aborted fetch — a superseded session load, a sidebar poll
@@ -358,6 +419,7 @@ module.exports = {
   getRuntimeProcess,
   setBrowserRequestHandler,
   handleRuntimeMessage,
+  requestRuntime,
   roleForPath,
   LIGHT_EXACT,
   LIGHT_PREFIXES,

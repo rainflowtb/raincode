@@ -2,7 +2,7 @@
  * Provider listing for the Models panel.
  *
  * Product surface (RainCode):
- * 1. **Subscription** — OAuth providers (Kimi / xAI / Codex / AtomGit / …)
+ * 1. **Subscription** — OAuth providers (Kimi / xAI / Codex / …)
  * 2. **Free** — managed free providers (separate free-models path)
  * 3. **Custom** — user `models.json` gateways (base URL + key/command)
  *
@@ -25,7 +25,6 @@ const OAUTH_DISPLAY_NAMES: Record<string, string> = {
   "github-copilot": "GitHub Copilot",
   "minimax-oauth": "MiniMax (OAuth)",
   nous: "Nous Portal",
-  atomgit: "AtomGit Coding Plan",
   rainflowtb: "RainFlow TB",
 };
 

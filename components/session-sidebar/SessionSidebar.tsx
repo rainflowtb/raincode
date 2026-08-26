@@ -162,7 +162,10 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       if (gen !== loadSessionsGenRef.current) return;
       setError(String(e));
     } finally {
-      if (showLoading && gen === loadSessionsGenRef.current) setLoading(false);
+      // The latest generation owns the loading flag: a superseding load with
+      // showLoading=false (e.g. StrictMode double-effect in dev) must still
+      // clear it, otherwise "loading" sticks until the next manual refresh.
+      if (gen === loadSessionsGenRef.current) setLoading(false);
     }
   }, []);
 

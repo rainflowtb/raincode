@@ -7,6 +7,7 @@ const os = require("os");
 const { isTraySupported, ensureTray, destroyTray } = require("./tray");
 const { registerAppScheme, serveAppProtocol, APP_ORIGIN } = require("./app-protocol");
 const { startRuntime, registerApiBridge, getRuntimeProcess, setBrowserRequestHandler } = require("./runtime-host");
+const { startLanServer, stopLanServer, getLanServerState } = require("./lan-server");
 const browserPool = require("./browser-pool");
 
 // The renderer is served locally over app://; the agent runtime is a private
@@ -837,6 +838,12 @@ async function bootstrap() {
   startAgentRuntime();
   console.log(`[electron] Agent runtime spawned in ${Date.now() - bootStarted}ms`);
 
+  // LAN access (off by default): serve the SPA + /api over HTTP when enabled.
+  void applyLanAccessFromSettings().then((lanState) => {
+    if (lanState.running) console.log(`[electron] LAN access on: ${lanState.urls.join(", ")}`);
+    if (lanState.error) console.warn(`[electron] LAN access failed: ${lanState.error}`);
+  });
+
   setSplashSubtitle("Loading workspace…");
 
   if (!hasDesktopUi()) {
@@ -962,6 +969,26 @@ ipcMain.handle("raincode-desktop:get-web-settings-path", () => {
   return path.join(agentDir, "raincode.json");
 });
 
+/**
+ * (Re)start or stop the LAN server to match the current settings file. The
+ * settings UI saves via /api/web-settings first, then calls lan-apply — this
+ * process re-reads the same raincode.json, so there is one source of truth.
+ */
+async function applyLanAccessFromSettings() {
+  const settings = readRaincodeSettingsFile();
+  if (settings.lanAccessEnabled === true) {
+    return startLanServer({
+      key: typeof settings.lanAccessKey === "string" ? settings.lanAccessKey : "",
+      distDir: path.join(appRoot, "desktop-dist"),
+    });
+  }
+  await stopLanServer();
+  return getLanServerState();
+}
+
+ipcMain.handle("raincode-desktop:lan-apply", () => applyLanAccessFromSettings());
+ipcMain.handle("raincode-desktop:lan-state", () => getLanServerState());
+
 // second-instance can fire before whenReady finishes; showMainWindow is safe either way.
 app.on("second-instance", () => {
   showMainWindow();
@@ -1036,6 +1063,7 @@ app.on("before-quit", () => {
   quitting = true;
   browserPool.destroyAll();
   destroyTray();
+  void stopLanServer();
   stopNextServer();
 });
 

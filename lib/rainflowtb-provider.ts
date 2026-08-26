@@ -7,8 +7,7 @@
  * catalog from the chosen channel, and standard chat completions against it.
  *
  * RAINFLOWTB runs the LocalApi OAuth broker service at api.rainflowtb.com —
- * endpoints under /oauth/* per the LocalApi repo, docs/pi-web-oauth.md. The
- * provider contract mirrors lib/atomgit-provider.ts.
+ * endpoints under /oauth/* per the LocalApi repo, docs/pi-web-oauth.md.
  *
  * Do not import from client components — use lib/rainflowtb-constants.ts.
  */
@@ -51,7 +50,7 @@ export {
   RAINFLOWTB_BASE_URL,
 } from "./rainflowtb-constants";
 
-/** Total login window and poll cadence (same shape as the AtomGit provider). */
+/** Total login window and poll cadence. */
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const POLL_INTERVAL_MS = 2_000;
 

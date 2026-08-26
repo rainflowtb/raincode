@@ -132,6 +132,8 @@ export function SettingsPage({
     disableHardwareAcceleration: false,
     autoCheckUpdates: true,
     autoDownloadUpdates: false,
+    lanAccessEnabled: false,
+    lanAccessKey: "",
     projectMemoryEnabled: false,
     projectMemoryAutoInject: false,
     projectMemoryTopK: 12,
@@ -206,6 +208,8 @@ export function SettingsPage({
           disableHardwareAcceleration: typeof s.disableHardwareAcceleration === "boolean" ? s.disableHardwareAcceleration : prev.disableHardwareAcceleration,
           autoCheckUpdates: typeof s.autoCheckUpdates === "boolean" ? s.autoCheckUpdates : prev.autoCheckUpdates,
           autoDownloadUpdates: typeof s.autoDownloadUpdates === "boolean" ? s.autoDownloadUpdates : prev.autoDownloadUpdates,
+          lanAccessEnabled: typeof s.lanAccessEnabled === "boolean" ? s.lanAccessEnabled : prev.lanAccessEnabled,
+          lanAccessKey: typeof s.lanAccessKey === "string" ? s.lanAccessKey : prev.lanAccessKey,
           projectMemoryEnabled:
             s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
             && typeof (s.projectMemory as { enabled?: unknown }).enabled === "boolean"
@@ -531,6 +535,7 @@ export function SettingsPage({
     <GeneralSettingsPanel
       prefs={prefs}
       onTerminalFont={(value) => setPrefs((p) => ({ ...p, terminalFont: value }))}
+      onLanAccessKey={(value) => setPrefs((p) => ({ ...p, lanAccessKey: value }))}
       patchPref={patchPref}
       isDesktop={isDesktop}
       restartHint={restartHint}
@@ -723,7 +728,7 @@ export function SettingsPage({
           padding: isMobile ? "4px 8px 8px" : "0 8px 8px",
         }}
       >
-        <main className="settings-page-main is-scroll shell-panel" data-overlay-scroll style={{ width: "auto" }}>
+        <main className="settings-page-main is-scroll shell-panel" data-overlay-scroll data-overlay-scroll-inset-top={12} data-overlay-scroll-inset-bottom={12} style={{ width: "auto" }}>
           {section === "general" && (
             <div className="settings-page-general">
               {generalPanel}

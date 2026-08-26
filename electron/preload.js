@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("raincodeDesktop", {
   windowState: () => ipcRenderer.invoke("raincode-desktop:window-state"),
   notify: (payload) => ipcRenderer.invoke("raincode-desktop:notify", payload),
   getWebSettingsPath: () => ipcRenderer.invoke("raincode-desktop:get-web-settings-path"),
+  /** LAN access server: apply = re-read settings file and start/stop; state = current status + URLs. */
+  lanApply: () => ipcRenderer.invoke("raincode-desktop:lan-apply"),
+  lanGetState: () => ipcRenderer.invoke("raincode-desktop:lan-state"),
   /**
    * Cold-start handshake: AppShell calls this after first paint so the main
    * process can dismiss the splash without flashing a white React mount frame.

@@ -160,6 +160,10 @@ export type WebSettings = {
   autoCheckUpdates: boolean;
   /** When an update is found, open the release page automatically. */
   autoDownloadUpdates: boolean;
+  /** Serve the web UI on the LAN (Electron main-process HTTP server). */
+  lanAccessEnabled: boolean;
+  /** Optional access key for the LAN server; empty = no key. */
+  lanAccessKey: string;
 };
 
 const DEFAULT_SETTINGS: WebSettings = {
@@ -201,6 +205,8 @@ const DEFAULT_SETTINGS: WebSettings = {
   disableHardwareAcceleration: false,
   autoCheckUpdates: true,
   autoDownloadUpdates: false,
+  lanAccessEnabled: false,
+  lanAccessKey: "",
 };
 
 const CODE_THEME_IDS = new Set<CodeThemeId>([
@@ -364,6 +370,8 @@ function normalizeWebSettings(raw: unknown): WebSettings {
     ),
     autoCheckUpdates: asBool(raw.autoCheckUpdates, DEFAULT_SETTINGS.autoCheckUpdates),
     autoDownloadUpdates: asBool(raw.autoDownloadUpdates, DEFAULT_SETTINGS.autoDownloadUpdates),
+    lanAccessEnabled: asBool(raw.lanAccessEnabled, DEFAULT_SETTINGS.lanAccessEnabled),
+    lanAccessKey: asString(raw.lanAccessKey),
   };
 }
 

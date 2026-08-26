@@ -209,6 +209,7 @@ export async function PUT(req: NextRequest) {
       "proxyBypass",
       "customCaCerts",
       "terminalFont",
+      "lanAccessKey",
     ] as const;
     for (const key of strFields) {
       if (key in body) {
@@ -233,6 +234,7 @@ export async function PUT(req: NextRequest) {
       "disableHardwareAcceleration",
       "autoCheckUpdates",
       "autoDownloadUpdates",
+      "lanAccessEnabled",
     ] as const;
     for (const key of boolFields) {
       if (key in body) {

@@ -470,7 +470,7 @@ export function ContextPanel() {
         </div>
       )}
 
-      <div className="git-panel-body" data-overlay-scroll style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div className="git-panel-body" data-overlay-scroll data-overlay-scroll-inset-bottom={12} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {!sessionStats && !ctx?.contextWindow && extensionRows.length === 0 ? (
           <div style={{
             padding: "24px 12px",

@@ -149,7 +149,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
   const [modeMenuRect, setModeMenuRect] = useState<{ top: number; right: number; left: number } | null>(null);
   const [modeBusy, setModeBusy] = useState(false);
-  const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
 
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
@@ -176,7 +175,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const inputRowRef = useRef<HTMLElement | null>(null);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
-  const controlsMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
@@ -974,9 +972,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       if (modeDropdownRef.current && !modeDropdownRef.current.contains(e.target as Node)) {
         setModeDropdownOpen(false);
       }
-      if (controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node)) {
-        setControlsMenuOpen(false);
-      }
       if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
         setHistoryMenuOpen(false);
       }
@@ -984,10 +979,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  useEffect(() => {
-    if (!isMobile) setControlsMenuOpen(false);
-  }, [isMobile]);
 
   /** Open a toolbar menu above its trigger using viewport-fixed coords (like model picker). */
   const openFixedMenu = useCallback((
@@ -1027,6 +1018,47 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       overflowY: "auto",
     };
   }, []);
+
+  /* Shared send/stop buttons: desktop renders them inside the controls row,
+     mobile renders them outside the "more" tray so the primary action is
+     always visible. Single definition keeps both placements in sync. */
+  const sendButton = (
+    <button
+      type="button"
+      className="composer-send"
+      onClick={handleSend}
+      disabled={!hasComposableInput}
+      title={t("chat.send")}
+      aria-label={t("chat.send")}
+      style={{
+        width: 32,
+        height: 32,
+        padding: 0,
+        border: "none",
+        borderRadius: "50%",
+        background: hasComposableInput ? "var(--text)" : "var(--bg-subtle)",
+        color: hasComposableInput ? "var(--bg)" : "var(--text-dim)",
+        cursor: hasComposableInput ? "pointer" : "not-allowed",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      <Icon icon={ArrowUp} size={16} strokeWidth={2.2} />
+    </button>
+  );
+  const stopButton = (
+    <button
+      type="button"
+      className="chrome-btn is-danger is-active"
+      onClick={onAbort}
+      title={t("chat.stopAgent")}
+    >
+      <Icon icon={Square} size={10} fill="currentColor" strokeWidth={0} />
+      {t("chat.stop")}
+    </button>
+  );
 
   return (
     <div
@@ -1255,55 +1287,18 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
           {!isMobile && <div className="composer-toolbar-spacer" aria-hidden />}
           {!isMobile && <div className="chrome-divider" aria-hidden />}
 
-          {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming) */}
-          <div ref={controlsMenuRef} className="chrome-controls composer-toolbar-end" style={{
+          {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming).
+              Mobile shows the same controls inline — the composer container
+              queries in globals.css progressively hide labels when narrow. */}
+          <div className="chrome-controls composer-toolbar-end" style={{
             flex: isMobile ? "0 0 auto" : undefined,
             justifyContent: "flex-end",
             position: "relative",
           }}>
-            {isMobile && (
-              <button
-                type="button"
-                className="chrome-btn"
-                title={controlsMenuOpen ? undefined : t("chat.moreControls")}
-                aria-label={t("chat.moreControls")}
-                aria-expanded={controlsMenuOpen}
-                aria-hidden={controlsMenuOpen || undefined}
-                tabIndex={controlsMenuOpen ? -1 : undefined}
-                onClick={() => {
-                  setControlsMenuOpen(true);
-                }}
-                style={{
-                  width: "100%",
-                  fontWeight: 500,
-                  visibility: controlsMenuOpen ? "hidden" : "visible",
-                  pointerEvents: controlsMenuOpen ? "none" : "auto",
-                  cursor: controlsMenuOpen ? "default" : "pointer",
-                }}
-              >
-                {t("common.more")}
-              </button>
-            )}
             <div
               className="chrome-controls"
-              style={{
-              display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
-              ...(isMobile ? {
-                position: "absolute",
-                right: 0,
-                bottom: 0,
-                zIndex: 60,
-                padding: 2,
-                width: "max-content",
-                maxWidth: "calc(100vw - 32px)",
-                flexWrap: "nowrap",
-                justifyContent: "flex-end",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--radius-md)",
-                background: "var(--bg-panel)",
-                boxShadow: "var(--shadow-md)",
-              } : null),
-            }}>
+              style={{ display: "flex" }}
+            >
             <ComposerModelChip
               isMobile={isMobile}
               isStreaming={isStreaming}
@@ -1334,17 +1329,9 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
               </button>
             )}
 
-            {isStreaming && (
-              <button
-                type="button"
-                className="chrome-btn is-danger is-active"
-                onClick={onAbort}
-                title={t("chat.stopAgent")}
-              >
-                <Icon icon={Square} size={10} fill="currentColor" strokeWidth={0} />
-                {t("chat.stop")}
-              </button>
-            )}
+            {/* Desktop keeps Stop in-flow here; on mobile it lives outside the
+                tray (below) so it is always visible during streaming. */}
+            {!isMobile && isStreaming && stopButton}
             {isStreaming ? (
               <>
                 {onSteer && (
@@ -1356,7 +1343,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                     title={t("chat.steerTitle")}
                   >
                     <Icon icon={ArrowRight} size={12} strokeWidth={1.8} />
-                    {(!isMobile || controlsMenuOpen) && <span>{t("chat.steer")}</span>}
+                    {!isMobile && <span>{t("chat.steer")}</span>}
                   </button>
                 )}
                 {onFollowUp && (
@@ -1368,72 +1355,17 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                     title={t("chat.followUpTitle")}
                   >
                     <Icon icon={ArrowUpToLine} size={12} strokeWidth={1.8} />
-                    {(!isMobile || controlsMenuOpen) && <span>{t("chat.followUp")}</span>}
+                    {!isMobile && <span>{t("chat.followUp")}</span>}
                   </button>
                 )}
               </>
             ) : (
-              <button
-                type="button"
-                className="composer-send"
-                onClick={handleSend}
-                disabled={!hasComposableInput}
-                title={t("chat.send")}
-                aria-label={t("chat.send")}
-                style={{
-                  width: 32,
-                  height: 32,
-                  padding: 0,
-                  border: "none",
-                  borderRadius: "50%",
-                  background: hasComposableInput ? "var(--text)" : "var(--bg-subtle)",
-                  color: hasComposableInput ? "var(--bg)" : "var(--text-dim)",
-                  cursor: hasComposableInput ? "pointer" : "not-allowed",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <Icon icon={ArrowUp} size={16} strokeWidth={2.2} />
-              </button>
-            )}
-            {isMobile && controlsMenuOpen && (
-              <button
-                type="button"
-                title={t("chat.collapseControls")}
-                aria-label={t("chat.collapseControls")}
-                aria-expanded={true}
-                onClick={() => {
-                  setControlsMenuOpen(false);
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 36,
-                  height: 32,
-                  padding: 0,
-                  marginLeft: 0,
-                  background: "var(--bg-hover)",
-                  border: "none",
-                  borderLeft: "1px solid var(--border)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) 0",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-              >
-                <Icon icon={X} size={13} strokeWidth={2} />
-              </button>
+              !isMobile && sendButton
             )}
             </div>
+            {/* Mobile: the primary action (send / stop) never hides inside the
+                tray — it stays tappable at the far right in every state. */}
+            {isMobile && (isStreaming ? stopButton : sendButton)}
           </div>
           </div>
           </div>

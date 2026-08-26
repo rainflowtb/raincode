@@ -6,7 +6,7 @@
  * - No pi.dev remote catalog. Builtins are re-registered from raw
  *   `builtinProviders()` (SDK create() wraps them in withRemoteCatalog by default).
  * - Live model lists come from each provider's own API (OpenAI-compat /models,
- *   AtomGit models-v2, TokenRhythm catalog) — never from pi.dev.
+ *   TokenRhythm catalog) — never from pi.dev.
  */
 import {
   ModelRuntime,
@@ -14,7 +14,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
-import { createAtomGitProvider } from "./atomgit-provider";
 import { createMinimaxProvider } from "./minimax-provider";
 import { createNousProvider } from "./nous-provider";
 import { createRainflowtbProvider } from "./rainflowtb-provider";
@@ -40,12 +39,10 @@ export async function createConfiguredModelRuntime(
     runtime.registerNativeProvider(provider);
   }
 
-  // First-party subscriptions (Hermes-parity OAuth + AtomGit).
+  // First-party subscriptions (Hermes-parity OAuth).
   // Stock API-key clouds are Custom-only (models.json).
-  runtime.registerNativeProvider(createAtomGitProvider());
   runtime.registerNativeProvider(createNousProvider());
   runtime.registerNativeProvider(createMinimaxProvider());
   runtime.registerNativeProvider(createRainflowtbProvider());
-  return runtime;
   return runtime;
 }

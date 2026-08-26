@@ -225,21 +225,13 @@ export function AssistantMessageView({
                 });
               }}
               title={t("msg.copyMessage")}
+              className="msg-action-btn"
               style={{
-                display: "flex", alignItems: "center", gap: 4,
-                padding: "3px 8px", height: 22,
-                background: "none", border: "none",
-                borderRadius: "var(--radius-sm)",
-                color: copied ? "var(--accent)" : "var(--text-dim)",
-                cursor: "pointer",
-                fontSize: 11, fontWeight: 400,
-                whiteSpace: "nowrap",
+                color: copied ? "var(--accent)" : undefined,
                 opacity: active ? 1 : 0,
                 pointerEvents: active ? "auto" : "none",
                 transition: "opacity 0.12s, color 0.12s",
               }}
-              onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
-              onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
             >
               {copied ? (
                 <Icon icon={Check} size={11} strokeWidth={1.8} />

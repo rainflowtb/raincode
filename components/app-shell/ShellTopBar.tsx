@@ -5,6 +5,7 @@
     brand + pills remain — session chrome belongs to the chat surface. */
 import { Menu, PanelLeft, PanelRight } from "lucide-react";
 import { useLocale } from "@/hooks/useLocale";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionInfo } from "@/lib/types";
 import { formatShortcut, modKeyLabel } from "@/lib/keyboard";
 import { Icon } from "../Icon";
@@ -44,6 +45,7 @@ export function ShellTopBar({
   onToggleRightPanel,
 }: ShellTopBarProps) {
   const { t } = useLocale();
+  const isMobile = useIsMobile();
   return (
     <div
       className="app-topbar titlebar-drag desktop-top-chrome"
@@ -60,8 +62,11 @@ export function ShellTopBar({
       }}
     >
       {/* When the sidebar is hidden on macOS desktop, leave room for traffic
-          lights. --traffic-lights-pad is 0 on web / win / linux. */}
-      {(!sidebarOpen || reserveTrafficLights) && <div className="traffic-lights-spacer titlebar-drag" aria-hidden />}
+          lights. --traffic-lights-pad is 0 on web / win / linux. On mobile the
+          sidebar is a fixed overlay drawer, so opening it must NOT remove the
+          pad — otherwise the left cluster slides left under the traffic
+          lights on a narrow macOS window. */}
+      {(!sidebarOpen || reserveTrafficLights || isMobile) && <div className="traffic-lights-spacer titlebar-drag" aria-hidden />}
 
       {/* Brand glyph shares one slot with the full sidebar toggle: glyph at
           rest, swap to the toggle button on hover / keyboard focus. */}
@@ -86,7 +91,12 @@ export function ShellTopBar({
             </button>
           </div>
         ) : (
-          <BrandGlyph />
+          /* Settings has no sidebar to toggle, but keeps the same 32px slot so
+             the nav pills don't shift left when switching views. Plain glyph —
+             NOT .brand-toggle-glyph, which (hover: none) hides in mobile.css. */
+          <div className="brand-toggle-slot" aria-hidden>
+            <BrandGlyph />
+          </div>
         )}
         <nav
           aria-label={t("shell.settings")}

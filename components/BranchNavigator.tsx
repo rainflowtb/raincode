@@ -7,6 +7,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useLocale } from "@/hooks/useLocale";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionEntry, SessionTreeNode } from "@/lib/types";
 
 interface BranchTreeProps {
@@ -94,6 +95,7 @@ interface TreeNodeProps {
 }
 
 function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelect }: TreeNodeProps) {
+  const isMobile = useIsMobile();
   const { node: rep, skipped } = compress(node);
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
@@ -108,7 +110,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
         style={{
           display: "flex",
           alignItems: "center",
-          height: 24,
+          height: isMobile ? 32 : 24,
           cursor: "pointer",
         }}
         onClick={() => onSelect(rep.entry.id)}

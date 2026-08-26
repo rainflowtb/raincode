@@ -13,18 +13,25 @@ export function MessageHoverShell({ style, renderActions, children }: {
   renderActions: (active: boolean) => ReactNode;
   children: ReactNode;
 }) {
-  const [active, setActive] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  // Touch devices have no hover: keep the action row always visible so the
+  // first tap acts instead of only revealing (lazy init — runs in browser).
+  const [coarsePointer] = useState(
+    () => typeof window !== "undefined" && typeof window.matchMedia === "function"
+      && window.matchMedia("(hover: none)").matches,
+  );
+  const active = hovered || coarsePointer;
 
   return (
     <div
       style={style}
-      onMouseEnter={() => setActive(true)}
-      onMouseLeave={() => setActive(false)}
-      onFocus={() => setActive(true)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
       onBlur={(e) => {
         // React onBlur is focusout: ignore focus moves between our own children.
         if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-        setActive(false);
+        setHovered(false);
       }}
     >
       {children}

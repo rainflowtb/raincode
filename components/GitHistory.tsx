@@ -152,7 +152,7 @@ export function GitHistory({
 
   return (
     <section className="git-history" aria-label={t("git.history")}>
-      <div className="git-history-list" data-overlay-scroll>
+      <div className="git-history-list" data-overlay-scroll data-overlay-scroll-inset-top={12} data-overlay-scroll-inset-bottom={12}>
         {loading && !commits && (
           <div className="git-history-status">{t("git.historyLoading")}</div>
         )}

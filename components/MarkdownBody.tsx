@@ -423,6 +423,9 @@ const CodeBlock = memo(function CodeBlock({
           border: "none",
           boxShadow: "none",
           whiteSpace: appearance.wrapCodeLines ? "pre-wrap" : "pre",
+          // Long lines must scroll, never clip: some highlighter themes omit
+          // their own pre overflow, and .markdown-code-block is overflow:hidden.
+          overflowX: "auto",
         }}
         codeTagProps={{
           style: {

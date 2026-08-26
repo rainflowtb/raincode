@@ -234,6 +234,30 @@ jiti remains only as a **dev / fallback** path for TypeScript sources. Do not
 preload the agent SDK through `jiti()` in packaged builds — it re-walks the
 bundled graph and measured ~20s for a file native import loads in ~0.5s.
 
+## LAN access (off by default)
+
+Settings → General → "Allow LAN access" starts the product's only web server:
+`electron/lan-server.js`, an HTTP adapter in the main process on port 39141
+(`0.0.0.0`). It serves `desktop-dist` statically (same index.html fallback and
+asset resolution as `app://`) and forwards `/api/*` through runtime-host's
+`requestRuntime`, so route handlers and the light/heavy split are unchanged.
+Every forwarded request is marked `stream: true` — the runtime answers all of
+them as open/chunk/end, which pipes onto the HTTP response and keeps SSE
+incremental without an SSE path list. Client disconnects send `{t:"abort"}`.
+
+The optional access key is a gate in front of everything: browsers without the
+`raincode_lan` cookie (SHA-256 hex of the key) get a built-in login page;
+`/api/*` gets 401 JSON. The toggle and key live in `raincode.json`
+(`lanAccessEnabled` / `lanAccessKey`); the settings UI saves via
+`/api/web-settings` and then calls `window.raincodeDesktop.lanApply()` so the
+main process re-reads the same file and starts/stops the server — no restart.
+
+The renderer needs no transport changes: `lib/api-transport.ts` already falls
+back to plain `fetch`/`EventSource` when the preload bridge is absent. The SPA
+has no router, so `desktop/main.tsx` branches on the `/collab/<token>` pathname
+to render `CollabViewer` — that is what makes shared read-only links openable
+for LAN browsers.
+
 ## Still on HTTP: the build only
 
 `next build` remains in the pipeline purely because `prepare-electron-standalone.mjs`

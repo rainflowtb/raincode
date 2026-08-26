@@ -59,13 +59,21 @@ function attach(el: HTMLElement): Attachment {
   let hovered = false;
   let dragging = false;
   let visible = false;
+  let wantVisible = false;
+  // True while an ancestor clips the container (sidebar width/translate
+  // collapse) or it is off-viewport. The container's own size does not change
+  // in those cases, so ResizeObserver never fires — without this the thumb
+  // would linger at its last position until the 900ms hide timer expires.
+  let occluded = false;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
   let rafId = 0;
 
   const setVisible = (next: boolean) => {
-    if (visible === next) return;
-    visible = next;
-    thumb.classList.toggle("is-visible", next);
+    wantVisible = next;
+    const shown = next && !occluded;
+    if (visible === shown) return;
+    visible = shown;
+    thumb.classList.toggle("is-visible", shown);
   };
 
   const scheduleHide = () => {
@@ -158,6 +166,19 @@ function attach(el: HTMLElement): Attachment {
 
   const resizeObserver = new ResizeObserver(update);
   resizeObserver.observe(el);
+  // Ancestor clip / off-viewport detection (sidebar collapse, drawer slide-out).
+  // threshold [0, 1]: fire when fully hidden or fully revealed.
+  const visibilityObserver = new IntersectionObserver((entries) => {
+    const entry = entries[entries.length - 1];
+    const next = !entry.isIntersecting || entry.intersectionRatio < 1;
+    if (next === occluded) return;
+    occluded = next;
+    // Re-evaluate through setVisible so a pending hover/flash request is
+    // honored the moment the container is fully visible again.
+    setVisible(wantVisible);
+    if (!occluded) update();
+  }, { threshold: [0, 1] });
+  visibilityObserver.observe(el);
   // Content growth without a scroll event (streaming output, lazy rows) still
   // needs a thumb re-layout; childList flaps are cheap enough to observe.
   const contentObserver = new MutationObserver(update);
@@ -175,6 +196,7 @@ function attach(el: HTMLElement): Attachment {
     if (hideTimer) clearTimeout(hideTimer);
     if (rafId) cancelAnimationFrame(rafId);
     resizeObserver.disconnect();
+    visibilityObserver.disconnect();
     contentObserver.disconnect();
     el.removeEventListener("scroll", onScroll);
     el.removeEventListener("pointerenter", onEnter);

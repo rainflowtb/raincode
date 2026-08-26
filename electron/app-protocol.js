@@ -95,4 +95,12 @@ function serveAppProtocol(distDir) {
   });
 }
 
-module.exports = { registerAppScheme, serveAppProtocol, APP_ORIGIN: ORIGIN, APP_SCHEME: SCHEME };
+module.exports = {
+  registerAppScheme,
+  serveAppProtocol,
+  APP_ORIGIN: ORIGIN,
+  APP_SCHEME: SCHEME,
+  // Shared with electron/lan-server.js so asset resolution has one owner.
+  resolveAsset,
+  MIME,
+};
