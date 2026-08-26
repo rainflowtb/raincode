@@ -27,6 +27,7 @@ import {
   type BashOperations,
 } from "@earendil-works/pi-coding-agent";
 import { createPtySession, destroyPtySession, getPtySession, subscribePtySession } from "./pty-sessions";
+import { claimJobReport, killJob, startJob } from "./background-jobs";
 import { foregroundGuardrail, looksLikeLongRunningCommand } from "./bash-command-classification";
 import { withProjectCommandEnvironment } from "./project-command-env";
 
@@ -58,6 +59,15 @@ function createAgentPtyBashOperations(options?: {
       rows: 32,
       publish: true,
     });
+    // Job preflight after spawn is deliberate here: startJob throws on the
+    // per-session cap; the PTY we just created must not leak on that path.
+    let job;
+    try {
+      job = startJob({ label: command, ptyId: info.id, ownerSessionId: options?.getAgentSessionId?.() });
+    } catch (error) {
+      try { destroyPtySession(info.id); } catch { /* ignore */ }
+      throw error;
+    }
 
     return await new Promise<{ exitCode: number | null }>((resolve, reject) => {
       let settled = false;
@@ -83,7 +93,7 @@ function createAgentPtyBashOperations(options?: {
 
       const onAbort = () => {
         // User/agent abort still kills the process.
-        try { destroyPtySession(info.id); } catch { /* ignore */ }
+        try { killJob(job.id); } catch { /* ignore */ }
         if (settled) return;
         settled = true;
         if (timers.startup) clearTimeout(timers.startup);
@@ -99,6 +109,8 @@ function createAgentPtyBashOperations(options?: {
           } else if (event.type === "exit") {
             sawExit = true;
             // Real process exit (crash or quick command) — return actual code.
+            // The result is delivered inline, so suppress the completion notice.
+            claimJobReport(job.id);
             detachTool(event.exitCode ?? 0);
           }
         });
@@ -115,15 +127,15 @@ function createAgentPtyBashOperations(options?: {
         signal.addEventListener("abort", onAbort, { once: true });
       }
 
-      // After startup window: hand process to Terminal UI and free the agent.
-      // Do NOT kill on model-provided timeouts — that was stopping npm run dev / http.server.
+      // After startup window: hand the process to the Terminal UI + job
+      // registry and free the agent. Do NOT kill on model-provided timeouts.
       timers.startup = setTimeout(() => {
         if (settled || sawExit) return;
         const still = getPtySession(info.id);
         if (!still) {
-          // Session was destroyed (tab closed / pruned) and destroyPtySession
-          // clears listeners before killing, so no exit event will reach us.
-          // Settle with the output collected so far instead of hanging.
+          // Session was destroyed (tab closed / pruned). The job settled via
+          // the exit path; the output so far is the inline delivery.
+          claimJobReport(job.id);
           detachTool(
             null,
             "\n[RainCode] Terminal session was closed before the process finished.\n",
@@ -132,12 +144,15 @@ function createAgentPtyBashOperations(options?: {
         }
         if (still.exited) {
           // Exit raced with the startup window; report the real code.
+          claimJobReport(job.id);
           detachTool(still.exitCode ?? 0);
           return;
         }
         detachTool(
           0,
-          "\n[RainCode] Process is running in the Terminal panel and will keep going until you stop it there (close the tab or Ctrl+C).\n",
+          `\n[RainCode] Background job ${job.id} is running in the user's Terminal panel. `
+          + `Use job_output (job_id: "${job.id}") to read new output and job_kill to stop it. `
+          + "You are notified in-session when it exits.\n",
         );
       }, LONG_RUNNING_STARTUP_MS);
       timers.startup.unref?.();
@@ -174,22 +189,22 @@ const PI_WEB_BASH_DESCRIPTION =
   `for long builds; you still get the result the moment it finishes.\n\n` +
   `Background (background: true): for long-lived processes that keep running — dev servers, ` +
   `watchers, daemons (npm run dev, vite, next dev, uvicorn, docker compose up, ...). The ` +
-  `process is moved into the user's Terminal panel: it keeps running after this tool returns, ` +
-  `and the user can watch, interact with, or stop it there. The tool returns startup output ` +
-  `after a short warmup window.\n\n` +
+  `process is moved into the user's Terminal panel and tracked as a background job: the tool ` +
+  `returns startup output after a short warmup window plus a job id. Read new output with ` +
+  `job_output, stop it with job_kill, list with job_list. You are notified when it exits.\n\n` +
   `Rules:\n` +
   `- NEVER run servers/watchers in foreground mode — such calls are rejected with guidance. ` +
   `Retry with background: true.\n` +
   `- Do NOT use shell-level background wrappers (nohup, setsid, disown, trailing &) in ` +
   `foreground mode — they are rejected too. background: true gives tracked lifecycle and ` +
   `output instead.\n` +
-  `- After starting a service in background, verify readiness once (health endpoint or log ` +
-  `signal), then report the access URL to the user. Do not poll, kill, or restart the ` +
-  `service unless the user asks.`;
+  `- After starting a service in background, verify readiness once (health endpoint, or ` +
+  `job_output with wait: true), then report the access URL to the user. You are notified ` +
+  `when a background job exits — do not busy-poll it.`;
 
 const PI_WEB_BASH_PROMPT_GUIDELINES = [
-  "Start dev servers / watchers with bash background: true — they keep running in the user's Terminal panel; foreground server commands are rejected.",
-  "After starting a background service, report the URL and move on; do not poll, kill, or restart it unless the user asks.",
+  "Start dev servers / watchers with bash background: true — they keep running in the user's Terminal panel as tracked jobs; foreground server commands are rejected.",
+  "Track every background job id you start. You are notified in-session when a job exits — do not busy-poll or sleep on it. Use job_output (wait: true) only when genuinely blocked, and job_kill jobs that stopped mattering.",
   "Use bash for terminal work (git, builds, installs). Do not use it for cat/sed/file search, and do not launch Playwright or Chrome as a stand-in for MCP.",
 ];
 type BashToolDefinitionLike = {

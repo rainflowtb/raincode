@@ -91,6 +91,9 @@ function roleForPath(rawPath) {
   }
 
   if (LIGHT_EXACT.has(pathname)) return "light";
+  // PTY sessions live in the heavy runtime's process-local registry — the agent
+  // bash tool creates them there, so Terminal UI routes must run there too.
+  if (pathname.startsWith("/api/cwd/pty")) return "heavy";
   return LIGHT_PREFIXES.some((prefix) => pathname.startsWith(prefix)) ? "light" : "heavy";
 }
 

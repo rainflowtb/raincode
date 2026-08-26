@@ -3602,13 +3602,15 @@ textarea.input-base:focus-visible {
   flex-direction: column;
 }
 .settings-page-nav {
-  /* Mirrors the session sidebar so switching chat/settings doesn't jump. */
+  /* Mirrors the session sidebar so switching chat/settings doesn't jump.
+     Padding is owned by the inline navStyle in SettingsPage.tsx (mobile vs
+     desktop); keep this in sync with the desktop value. */
   width: var(--sidebar-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   overflow: auto;
-  padding: 12px 8px;
+  padding: 12px 0 12px 8px;
   background: transparent;
 }
 .settings-page-nav.is-mobile {

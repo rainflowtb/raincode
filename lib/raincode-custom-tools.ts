@@ -9,6 +9,7 @@ import { createGithubTools } from "./agent-github-tool";
 import { createAdvancedTools } from "./agent-advanced-tools";
 import { createCodeIntelTools } from "./agent-code-intel-tools";
 import { createDebugTools } from "./agent-debug-tools";
+import { createJobTools } from "./agent-job-tools";
 import { createDiagnosticsTool, createWebTools } from "./agent-extra-tools";
 import { createProjectMemoryTools } from "./agent-memory-tools";
 import { createBrowserTool } from "./agent-browser-tool";
@@ -36,6 +37,7 @@ export function createRainCodeCustomTools(options: RainCodeCustomToolsOptions) {
         ...createWebTools(),
         ...createCodeIntelTools(cwd),
         ...createDebugTools(cwd),
+        ...createJobTools(getAgentSessionId),
         ...createGithubTools(cwd),
         ...createAdvancedTools({ cwd, getSessionId }),
         createBrowserTool(getSessionId ?? (() => undefined)),

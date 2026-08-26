@@ -14,6 +14,9 @@ export const SUBAGENT_RESULTS_CUSTOM_TYPE = "subagent-results";
 /** customType of a child-chosen report (see lib/first-party/subagents/report.ts). */
 export const SUBAGENT_REPORT_CUSTOM_TYPE = "subagent-report";
 
+/** customType of auto-injected background bash job completion notices (see lib/first-party/jobs-notify.ts). */
+export const JOB_RESULTS_CUSTOM_TYPE = "job-results";
+
 export interface SessionHeader {
   type: "session";
   version?: number;

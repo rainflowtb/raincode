@@ -1,5 +1,9 @@
 /**
  * First-party subagent tools + Agents chrome. Replaces @gotgenes/pi-subagents.
+ *
+ * Notification model (deepseek-harness style): background children never block
+ * the parent turn. Finished results reach the parent through delivery.ts —
+ * collected at agent_end while busy, budgeted wake while idle.
  */
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext, InlineExtension } from "@earendil-works/pi-coding-agent";
@@ -8,13 +12,14 @@ import { NativeSubagentManager } from "./manager";
 import { formatAgentWidgetLines } from "./widget";
 import { toolDetailsFor } from "./identity";
 import {
-  deliverUncollectedOnAgentEnd,
   formatRecord,
+  SubagentDelivery,
   SUBAGENT_RESULTS_CUSTOM_TYPE,
-} from "./settle";
+} from "./delivery";
 import { SUBAGENT_REPORT_CUSTOM_TYPE } from "../../types";
-import { registerSubagentHost, unregisterSubagentHost } from "./host";
+import { registerSubagentHost } from "./host";
 import { buildCatalogRecords, formatAgentList, listAgents, type AgentListScope } from "./list";
+import type { SubagentRecord } from "./types";
 
 function parentConversationSeed(ctx: ExtensionContext): string {
   try {
@@ -55,21 +60,51 @@ const DESCRIPTION = [
   "Launch a specialized subagent for a self-contained task.",
   "Available types: Explore, Plan, Reviewer, general-purpose (plus any ~/.raincode/agents or <cwd>/.pi/agents).",
   "Use Explore for read-only search, Plan for design, Reviewer for git/patch review, general-purpose for multi-file work.",
-  "Set run_in_background=true to run agents in parallel during this turn. The parent turn still collects results before it can finish.",
+  "Set run_in_background=true to run agents in parallel. When a background agent finishes, its result is delivered to you automatically — collected at the end of your current turn, or waking you when you are idle.",
   "Pass resume=<agent id> with a new prompt to continue the same child conversation.",
 ].join(" ");
 
-function textResult(text: string, details: Record<string, unknown> = {}) {
-  return { content: [{ type: "text" as const, text }], details };
+const WAIT_DEFAULT_MS = 30_000;
+const WAIT_MAX_MS = 600_000;
+
+function clampWaitMs(value: unknown): number {
+  const ms = typeof value === "number" && Number.isFinite(value) ? value : WAIT_DEFAULT_MS;
+  return Math.max(1_000, Math.min(WAIT_MAX_MS, Math.floor(ms)));
 }
 
+function textResult(text: string, details: Record<string, unknown> = {}, isError = false) {
+  return { content: [{ type: "text" as const, text }], details, ...(isError ? { isError: true } : {}) };
+}
 
-export function createSubagentsInlineExtension(): InlineExtension {
+/** Tool result for a settled record; child failures surface as tool errors. */
+function recordResult(record: SubagentRecord) {
+  return textResult(formatRecord(record), toolDetailsFor(record), record.status === "error");
+}
+
+export function createSubagentsInlineExtension(options?: { depth?: number }): InlineExtension {
+  const depth = options?.depth ?? 1;
   return {
     name: "subagents",
     factory(pi: ExtensionAPI) {
-      const manager = new NativeSubagentManager();
+      const manager = new NativeSubagentManager(depth);
       let widgetCtx: ExtensionContext | undefined;
+
+      const delivery = new SubagentDelivery(manager, {
+        isParentIdle: () => {
+          try { return widgetCtx?.isIdle() === true; } catch { return false; }
+        },
+        wakeParent: (message) => {
+          try {
+            pi.sendMessage(
+              { customType: SUBAGENT_RESULTS_CUSTOM_TYPE, content: message, display: false },
+              { deliverAs: "followUp", triggerTurn: true },
+            );
+          } catch {
+            // Parent session already gone.
+          }
+        },
+      });
+      manager.setOnSettle((record) => delivery.notifySettled(record));
 
       const publish = (): void => {
         const lines = formatAgentWidgetLines(buildCatalogRecords(
@@ -95,7 +130,7 @@ export function createSubagentsInlineExtension(): InlineExtension {
           // Permission subscriber is optional.
         }
       });
-      manager.setOnReport((record, output, delivery) => {
+      manager.setOnReport((record, output, reportDelivery) => {
         const header = `Subagent report from ${record.displayName} (${record.description}).`;
         const body = [header, `Agent ID: ${record.id}`, record.sessionId ? `Session ID: ${record.sessionId}` : "", "", output]
           .filter((line, index, all) => line !== "" || all[index - 1] !== "")
@@ -103,7 +138,7 @@ export function createSubagentsInlineExtension(): InlineExtension {
         try {
           pi.sendMessage(
             { customType: SUBAGENT_REPORT_CUSTOM_TYPE, content: body, display: false },
-            delivery === "quiet"
+            reportDelivery === "quiet"
               ? { deliverAs: "nextTurn" }
               : { deliverAs: "followUp", triggerTurn: true },
           );
@@ -112,9 +147,11 @@ export function createSubagentsInlineExtension(): InlineExtension {
         }
       });
 
+      // Parent Stop interrupts in-flight child turns but keeps resident
+      // children alive; destruction happens only via kill / teardown.
       const bindParentAbort = (signal?: AbortSignal): void => {
         if (!signal) return;
-        const onAbort = () => { void manager.abortAll(); };
+        const onAbort = () => { void manager.interruptAll(); };
         if (signal.aborted) onAbort();
         else signal.addEventListener("abort", onAbort, { once: true });
       };
@@ -127,28 +164,22 @@ export function createSubagentsInlineExtension(): InlineExtension {
         publish();
       });
       pi.on("input", (_event, ctx) => {
-        if (ctx.isIdle()) manager.beginPrompt();
+        if (ctx.isIdle()) {
+          manager.beginPrompt();
+          // User-authored input refills the completion-wake budget.
+          delivery.resetWakeBudget();
+        }
         bindParentAbort(ctx.signal);
       });
-      pi.on("agent_end", async (event, ctx) => {
+      pi.on("agent_end", (event, ctx) => {
         bindParentAbort(ctx.signal);
         if (ctx.signal?.aborted) return;
-        const delivered = await deliverUncollectedOnAgentEnd({
-          manager,
-          messages: event.messages,
-          signal: ctx.signal,
-        });
+        const delivered = delivery.collectAtAgentEnd(event.messages);
         if (!delivered || ctx.signal?.aborted) return;
         pi.sendMessage(
           { customType: SUBAGENT_RESULTS_CUSTOM_TYPE, content: delivered, display: false },
           { deliverAs: "followUp" },
         );
-      });
-      pi.on("session_shutdown", () => {
-        const parentId = widgetCtx?.sessionManager.getSessionId();
-        if (parentId) unregisterSubagentHost(parentId, manager);
-        void manager.abortAll();
-        widgetCtx = undefined;
       });
 
       pi.registerTool({
@@ -159,9 +190,9 @@ export function createSubagentsInlineExtension(): InlineExtension {
         promptGuidelines: [
           "Use the subagent tool proactively for exploration, planning, review, or work that touches 3+ files.",
           "Launch independent subtasks in parallel with run_in_background=true.",
-          "Call get_subagent_result with wait=true when you need a result mid-turn. Do not treat a background launch as fire-and-forget.",
+          "Call get_subagent_result with wait=true when you need a result mid-turn. Background results otherwise arrive on their own.",
           "Each prompt must be self-contained unless you pass resume=<agent id> to continue that child.",
-          "Call list_agents to recall children. interrupt_subagent stops the current turn but keeps the child.",
+          "Call list_agents to recall children. interrupt_agent stops the current turn but keeps the child; kill_subagent disposes it.",
         ],
         parameters: Type.Object({
           prompt: Type.String({ description: "The task for the agent to perform." }),
@@ -169,10 +200,13 @@ export function createSubagentsInlineExtension(): InlineExtension {
           subagent_type: Type.String({
             description: "Agent type: Explore, Plan, Reviewer, general-purpose, or a custom ~/.raincode/agents name.",
           }),
-          model: Type.Optional(Type.String({ description: "Optional provider/modelId override." })),
+          model: Type.Optional(Type.String({ description: "Optional exact provider/modelId override." })),
           thinking: Type.Optional(Type.String({ description: "Thinking level override." })),
           run_in_background: Type.Optional(Type.Boolean({
-            description: "Return immediately so other work in this turn can run in parallel. The parent turn still collects the result before it can finish.",
+            description: "Return immediately so other work in this turn can run in parallel. The result is delivered automatically when the agent finishes.",
+          })),
+          background_mode: Type.Optional(Type.String({
+            description: "continuable (default) keeps the child for send_message/resume; one-shot disposes it when it finishes.",
           })),
           resume: Type.Optional(Type.String({ description: "Existing agent id to continue." })),
         }),
@@ -184,6 +218,7 @@ export function createSubagentsInlineExtension(): InlineExtension {
             model?: string;
             thinking?: string;
             run_in_background?: boolean;
+            background_mode?: string;
             resume?: string;
           };
           widgetCtx = ctx;
@@ -197,10 +232,10 @@ export function createSubagentsInlineExtension(): InlineExtension {
                 );
               }
               manager.markCollected(record.id);
-              return textResult(formatRecord(record), toolDetailsFor(record));
+              return recordResult(record);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
-              return textResult(message);
+              return textResult(message, {}, true);
             }
           }
 
@@ -215,8 +250,7 @@ export function createSubagentsInlineExtension(): InlineExtension {
             modelSpec: params.model,
             thinkingSpec: params.thinking,
             background: params.run_in_background === true,
-            mode: "continuable",
-            depth: 1,
+            mode: params.background_mode === "one-shot" ? "one-shot" : "continuable",
           });
 
           if (params.run_in_background) {
@@ -229,32 +263,50 @@ export function createSubagentsInlineExtension(): InlineExtension {
               `Type: ${resolved.type.displayName}`,
               `Description: ${params.description}`,
               `Available types: ${names}`,
-              "Use get_subagent_result (wait: true) to collect the result mid-turn. resume=<agent id> continues this child. If you finish without collecting, results are delivered automatically and the turn continues.",
+              "The result arrives automatically when the agent finishes. Use get_subagent_result (wait: true) to collect it mid-turn; resume=<agent id> continues this child.",
             ].filter(Boolean).join("\n"), toolDetailsFor(published));
           }
 
           const record = await manager.wait(id, signal);
           manager.markCollected(id);
-          return textResult(formatRecord(record), toolDetailsFor(record));
+          return recordResult(record);
         },
       });
 
       pi.registerTool({
         name: "get_subagent_result",
         label: "Subagent result",
-        description: "Get a subagent's status or wait for its result.",
+        description: "Get a subagent's status or wait for its result. Waiting is bounded by timeout_ms (default 30s, max 10min).",
         promptSnippet: "get_subagent_result: Read or wait for a subagent result",
         parameters: Type.Object({
           agent_id: Type.String({ description: "Agent id returned by subagent." }),
           wait: Type.Optional(Type.Boolean({ description: "Wait until the agent finishes." })),
+          timeout_ms: Type.Optional(Type.Number({ description: "Wait bound in ms (default 30000, max 600000)." })),
         }),
         async execute(_id, raw, signal) {
-          const params = raw as { agent_id: string; wait?: boolean };
+          const params = raw as { agent_id: string; wait?: boolean; timeout_ms?: number };
           const current = manager.get(params.agent_id);
           if (!current) return textResult(`Agent not found: "${params.agent_id}".`);
-          const record = params.wait ? await manager.wait(params.agent_id, signal) : current;
+          if (!params.wait) {
+            manager.markCollected(params.agent_id);
+            return recordResult(current);
+          }
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const record = await Promise.race([
+            manager.wait(params.agent_id, signal),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(() => resolve(null), clampWaitMs(params.timeout_ms));
+            }),
+          ]).finally(() => { if (timer) clearTimeout(timer); });
+          if (record === null) {
+            const snapshot = manager.get(params.agent_id) ?? current;
+            return textResult(
+              `${formatRecord(snapshot)}\n(still ${snapshot.status} after the wait timeout — call again to keep waiting)`,
+              toolDetailsFor(snapshot),
+            );
+          }
           manager.markCollected(params.agent_id);
-          return textResult(formatRecord(record), toolDetailsFor(record));
+          return recordResult(record);
         },
       });
 
@@ -298,11 +350,6 @@ export function createSubagentsInlineExtension(): InlineExtension {
         },
       });
 
-      const interruptExecute = async (_id: string, raw: unknown) => {
-        const params = raw as { agent_id?: string; subagent_id?: string };
-        return textResult(await manager.interrupt(params.agent_id || params.subagent_id || ""));
-      };
-
       pi.registerTool({
         name: "send_message",
         label: "Send message",
@@ -322,7 +369,7 @@ export function createSubagentsInlineExtension(): InlineExtension {
               toolDetailsFor(record),
             );
           } catch (error) {
-            return textResult(error instanceof Error ? error.message : String(error));
+            return textResult(error instanceof Error ? error.message : String(error), {}, true);
           }
         },
       });
@@ -335,18 +382,27 @@ export function createSubagentsInlineExtension(): InlineExtension {
         parameters: Type.Object({
           agent_id: Type.String({ description: "Running agent or session id." }),
         }),
-        execute: interruptExecute,
+        async execute(_id, raw) {
+          const params = raw as { agent_id?: string; subagent_id?: string };
+          return textResult(await manager.interrupt(params.agent_id || params.subagent_id || ""));
+        },
       });
 
       pi.registerTool({
-        name: "interrupt_subagent",
-        label: "Interrupt subagent",
-        description: "Alias of interrupt_agent.",
-        promptSnippet: "interrupt_subagent: Stop a child's current turn",
+        name: "kill_subagent",
+        label: "Kill subagent",
+        description:
+          "Hard-stop a subagent and dispose its session. Unlike interrupt_agent, the child cannot be continued afterwards.",
+        promptSnippet: "kill_subagent: Dispose a subagent for good",
         parameters: Type.Object({
-          agent_id: Type.String({ description: "Running agent id." }),
+          agent_id: Type.String({ description: "Agent or session id to dispose." }),
         }),
-        execute: interruptExecute,
+        async execute(_id, raw) {
+          const params = raw as { agent_id?: string; subagent_id?: string };
+          const id = params.agent_id || params.subagent_id || "";
+          const killed = await manager.kill(id);
+          return textResult(killed ? `Agent ${id} killed and disposed.` : `Agent not found: "${id}".`);
+        },
       });
 
       pi.registerTool({
@@ -372,12 +428,11 @@ export function createSubagentsInlineExtension(): InlineExtension {
             note: resolved.note,
             background: false,
             mode: "one-shot",
-            depth: 1,
             seed: parentConversationSeed(ctx),
           });
           const record = await manager.wait(id, signal);
           manager.markCollected(id);
-          return textResult(formatRecord(record), toolDetailsFor(record));
+          return recordResult(record);
         },
       });
     },

@@ -1,6 +1,7 @@
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
 import {
   AGENT_MODE_BRIEF_CUSTOM_TYPE,
+  JOB_RESULTS_CUSTOM_TYPE,
   MEMORY_CONTEXT_CUSTOM_TYPE,
   SUBAGENT_REPORT_CUSTOM_TYPE,
   SUBAGENT_RESULTS_CUSTOM_TYPE,
@@ -12,6 +13,7 @@ const HIDDEN_CONTEXT_CUSTOM_TYPES = new Set<string>([
   AGENT_MODE_BRIEF_CUSTOM_TYPE,
   SUBAGENT_RESULTS_CUSTOM_TYPE,
   SUBAGENT_REPORT_CUSTOM_TYPE,
+  JOB_RESULTS_CUSTOM_TYPE,
 ]);
 
 /** Hidden model-only context (memory recall, mode briefing) never renders. */

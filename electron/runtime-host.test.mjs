@@ -67,6 +67,11 @@ test("SDK / ModelRuntime routes stay on heavy", () => {
     "/api/advisor",
     "/api/memory-review",
     "/api/collab",
+    // PTY registry is process-local to the heavy runtime (agent bash creates there).
+    "/api/cwd/pty",
+    "/api/cwd/pty/events?cwd=/tmp",
+    "/api/cwd/pty/abc123/events",
+    "/api/cwd/pty/abc123/input",
   ];
   for (const path of heavy) {
     assert.equal(roleForPath(path), "heavy", path);

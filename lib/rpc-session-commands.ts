@@ -461,6 +461,15 @@ export async function dispatchRpcSessionCommand(
       return host.interrupt(childId);
     }
 
+    case "subagent_kill": {
+      const host = getSubagentHost(wrapper.sessionId || "");
+      if (!host) throw new Error("No subagent host for this session");
+      const childId = String(command.childSessionId ?? command.agentId ?? "");
+      if (!childId) throw new Error("childSessionId is required");
+      const killed = await host.kill(childId);
+      return killed ? `Agent ${childId} killed and disposed.` : `Agent not found: "${childId}".`;
+    }
+
     case "subagent_list": {
       const host = getSubagentHost(wrapper.sessionId || "");
       return host?.list() ?? [];

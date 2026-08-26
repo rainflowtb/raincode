@@ -24,10 +24,16 @@ import {
   type SubagentDescriptor,
 } from "./durable";
 
+export type ChildTurnResult = {
+  text: string;
+  stopReason: "completed" | "aborted" | "error";
+  error?: string;
+};
+
 export type ChildRun = {
   sessionId: string;
   sessionFile?: string;
-  prompt: (text: string) => Promise<string>;
+  prompt: (text: string) => Promise<ChildTurnResult>;
   steer: (text: string) => Promise<void>;
   interrupt: () => Promise<void>;
   abort: () => Promise<void>;
@@ -86,6 +92,9 @@ function collectLastAssistantText(messages: unknown[]): string {
   return "(no output)";
 }
 
+/** Fallback agent types carry no maxTurns; cap them so a child cannot loop forever. */
+export const DEFAULT_CHILD_MAX_TURNS = 40;
+
 function resolveChildModel(ctx: ExtensionContext, spec?: string) {
   if (!spec) return ctx.model;
   const lower = spec.toLowerCase();
@@ -94,13 +103,13 @@ function resolveChildModel(ctx: ExtensionContext, spec?: string) {
     const found = ctx.modelRegistry.find(spec.slice(0, slash), spec.slice(slash + 1));
     if (found) return found;
   }
-  for (const model of [...ctx.modelRegistry.getAvailable(), ...ctx.modelRegistry.getAll()]) {
+  const candidates = [...ctx.modelRegistry.getAvailable(), ...ctx.modelRegistry.getAll()];
+  for (const model of candidates) {
     const ref = `${model.provider}/${model.id}`.toLowerCase();
-    if (ref === lower || model.id.toLowerCase() === lower || model.id.toLowerCase().includes(lower)) {
-      return model;
-    }
+    if (ref === lower || model.id.toLowerCase() === lower) return model;
   }
-  return ctx.model;
+  const sample = candidates.slice(0, 10).map((model) => `${model.provider}/${model.id}`).join(", ");
+  throw new Error(`Unknown model "${spec}". Use an exact provider/modelId. Available (sample): ${sample}`);
 }
 
 function buildSystemPrompt(type: AgentTypeConfig, parentPrompt: string): string {
@@ -118,7 +127,7 @@ export async function createChildRun(input: CreateChildRunInput): Promise<ChildR
   const mode = parseAgentMode(readGlobalAgentMode());
 
   const nestedFactory = canNest
-    ? (await import("./index")).createSubagentsInlineExtension()
+    ? (await import("./index")).createSubagentsInlineExtension({ depth: depth + 1 })
     : undefined;
 
   const loader = new DefaultResourceLoader({
@@ -189,10 +198,24 @@ export async function createChildRun(input: CreateChildRunInput): Promise<ChildR
   }
 
   let activityListener: ((text?: string) => void) | undefined;
+  // Per-prompt turn tracking. assistantTurns resets on each prompt() so a
+  // continuable child gets a fresh budget per turn, not a cumulative one.
+  const maxTurns = type.maxTurns === 0
+    ? Number.POSITIVE_INFINITY
+    : (type.maxTurns ?? DEFAULT_CHILD_MAX_TURNS);
   let assistantTurns = 0;
+  let turnLimitHit = false;
+  let lastStopReason: string | undefined;
+  let lastErrorMessage: string | undefined;
   const eventListeners = new Set<(event: { type?: string; [key: string]: unknown }) => void>();
   const unsubscribe = session.subscribe((event) => {
-    const rec = event as { type?: string; toolName?: string; name?: string; args?: unknown; message?: { role?: string } };
+    const rec = event as {
+      type?: string;
+      toolName?: string;
+      name?: string;
+      args?: unknown;
+      message?: { role?: string; stopReason?: string; errorMessage?: string };
+    };
     if (rec.type === "tool_execution_start" || rec.type === "tool_call") {
       activityListener?.(activityFromToolEvent(rec));
     }
@@ -201,9 +224,12 @@ export async function createChildRun(input: CreateChildRunInput): Promise<ChildR
     }
     if (rec.type === "message_end" && rec.message?.role === "assistant") {
       activityListener?.();
-      if (type.maxTurns && type.maxTurns > 0) {
-        assistantTurns += 1;
-        if (assistantTurns >= type.maxTurns) void session.abort();
+      lastStopReason = rec.message.stopReason;
+      if (rec.message.errorMessage) lastErrorMessage = rec.message.errorMessage;
+      assistantTurns += 1;
+      if (assistantTurns >= maxTurns) {
+        turnLimitHit = true;
+        void session.abort();
       }
     }
     for (const listener of eventListeners) listener(event as { type?: string; [key: string]: unknown });
@@ -212,17 +238,43 @@ export async function createChildRun(input: CreateChildRunInput): Promise<ChildR
   return {
     sessionId: session.sessionId,
     sessionFile: session.sessionFile,
-    async prompt(text: string) {
+    async prompt(text): Promise<ChildTurnResult> {
+      assistantTurns = 0;
+      turnLimitHit = false;
+      lastStopReason = undefined;
+      lastErrorMessage = undefined;
+      let thrown: unknown;
       try {
         if (session.isStreaming) {
           await session.prompt(text, { streamingBehavior: "followUp" });
         } else {
           await session.prompt(text);
         }
-      } catch {
-        // abort/interrupt settles the in-flight prompt; return whatever text landed.
+      } catch (error) {
+        thrown = error;
       }
-      return collectLastAssistantText(session.messages as unknown[]);
+      const output = collectLastAssistantText(session.messages as unknown[]);
+      if (turnLimitHit) {
+        return { text: output, stopReason: "error", error: `turn limit reached (${maxTurns})` };
+      }
+      if (thrown) {
+        // abort/interrupt rejects the in-flight prompt; that is not a failure.
+        if (lastStopReason === "aborted") return { text: output, stopReason: "aborted" };
+        return {
+          text: output,
+          stopReason: "error",
+          error: thrown instanceof Error ? thrown.message : String(thrown),
+        };
+      }
+      if (lastStopReason === "aborted") return { text: output, stopReason: "aborted" };
+      if (lastStopReason === "error" || lastStopReason === "length") {
+        return {
+          text: output,
+          stopReason: "error",
+          error: lastErrorMessage ?? `child stopped: ${lastStopReason}`,
+        };
+      }
+      return { text: output, stopReason: "completed" };
     },
     async steer(text: string) {
       await session.steer(text);

@@ -1,52 +1,42 @@
 /**
- * Queue, spawn, follow up, interrupt, and settle native subagents for one parent.
- * A finished turn keeps the child session (idle); only abort/shutdown dispose it.
+ * Spawn, continue, interrupt, and tear down native subagents for one parent.
+ * Record state transitions live in registry.ts (first-wins settle + queue);
+ * result delivery lives in delivery.ts. A finished turn keeps the child
+ * session resident; only kill / teardown / one-shot settle dispose it.
  */
-import { randomUUID } from "crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { cacheSessionPath } from "../../session-reader";
-import { readWebSettings } from "../../web-settings";
 import { registerChildRun, unregisterChildRun } from "./host";
-import { createChildRun, type ChildRun } from "./child-session";
+import { createChildRun, type ChildTurnResult } from "./child-session";
 import { listDiskChildren, type SubagentDescriptor, type SubagentMode } from "./durable";
 import { loadAgentTypes, resolveAgentType } from "./catalog";
-import type { AgentTypeConfig, SubagentRecord, SubagentStatus } from "./types";
+import {
+  isHardStop,
+  isTurnDone,
+  publicRecord,
+  snapshotUsage,
+  SubagentRegistry,
+  type LiveRecord,
+} from "./registry";
+import type { AgentTypeConfig, SubagentRecord } from "./types";
 import type { ReportDelivery } from "./report";
 
-function maxConcurrent(): number {
-  const cap = readWebSettings().subagentConcurrency;
-  if (!cap.enabled) return Number.MAX_SAFE_INTEGER;
-  return Math.max(1, Math.min(16, cap.max));
-}
-
-type LiveRecord = SubagentRecord & {
-  run?: ChildRun;
-  waiters: Array<(record: SubagentRecord) => void>;
-  publishedWaiters: Array<(record: SubagentRecord) => void>;
-  queuedPrompt?: string;
-  typeConfig: AgentTypeConfig;
-  ctx: ExtensionContext;
-  modelSpec?: string;
-  thinkingSpec?: string;
-  epoch: number;
-  /** Wall-clock ms of the parent turn that spawned/resumed this agent. */
-  parentTurnStartedAt: number;
-  collected: boolean;
-  mode: SubagentMode;
-  depth: number;
-  seed?: string;
-};
-
 export class NativeSubagentManager {
-  private readonly records = new Map<string, LiveRecord>();
+  private readonly registry: SubagentRegistry;
   private onChange: (() => void) | null = null;
   private onPublish: ((record: SubagentRecord) => void) | null = null;
   private onReport: ((record: SubagentRecord, output: string, delivery: ReportDelivery) => void) | null = null;
-  private promptEpoch = 0;
+  private onSettle: ((record: SubagentRecord) => void) | null = null;
+  private tornDown = false;
   private currentTurnStartedAt = 0;
 
-  get epoch(): number {
-    return this.promptEpoch;
+  /** @param depth depth of children this manager spawns (1 for root sessions). */
+  constructor(private readonly depth: number = 1) {
+    this.registry = new SubagentRegistry({
+      onChange: () => this.emit(),
+      onSettle: (record) => this.handleSettled(record),
+      startQueued: (record, prompt) => this.start(record, prompt),
+    });
   }
 
   /** Wall-clock ms of the current parent turn's start (idle-input beginPrompt). 0 until a turn begins. */
@@ -56,7 +46,6 @@ export class NativeSubagentManager {
 
   beginPrompt(): void {
     this.currentTurnStartedAt = Date.now();
-    this.promptEpoch += 1;
     this.emit();
   }
 
@@ -72,15 +61,36 @@ export class NativeSubagentManager {
     this.onReport = handler;
   }
 
+  /** Completion-notice hook (delivery.ts). Fires once per settled turn. */
+  setOnSettle(handler: (record: SubagentRecord) => void): void {
+    this.onSettle = handler;
+  }
+
   list(): SubagentRecord[] {
-    return [...this.records.values()]
-      .sort((a, b) => b.startedAt - a.startedAt)
-      .map(publicRecord);
+    return this.registry.list();
   }
 
   get(id: string): SubagentRecord | undefined {
-    const record = this.resolveLive(id);
-    return record ? publicRecord(record) : undefined;
+    return this.registry.get(id);
+  }
+
+  markCollected(id: string): void {
+    this.registry.markCollected(id);
+  }
+
+  /** delivery.ts feed: finished turns whose result never reached the parent. */
+  finishedUndelivered(): SubagentRecord[] {
+    return this.registry.finishedUndelivered().map(publicRecord);
+  }
+
+  /** delivery.ts claim: at-most-once completion notice. */
+  claimReport(id: string): boolean {
+    const record = this.registry.resolve(id);
+    return record ? this.registry.claimReport(record) : false;
+  }
+
+  isResident(id: string): boolean {
+    return Boolean(this.registry.resolve(id)?.run);
   }
 
   hydrate(ctx: ExtensionContext): void {
@@ -88,84 +98,27 @@ export class NativeSubagentManager {
     const types = loadAgentTypes(ctx.cwd);
     for (const disk of listDiskChildren(parentFile)) {
       if (disk.descriptor?.mode === "one-shot") continue;
-      if ([...this.records.values()].some((record) => record.sessionId === disk.sessionId)) continue;
+      if (this.registry.all().some((record) => record.sessionId === disk.sessionId)) continue;
       const resolved = resolveAgentType(disk.descriptor?.type, types);
-      const id = disk.descriptor?.agentId || disk.sessionId;
-      const record: LiveRecord = {
-        id,
-        type: resolved.type.name,
-        displayName: resolved.type.displayName,
-        description: disk.descriptor?.label || resolved.type.displayName,
-        status: "completed",
-        startedAt: Date.parse(disk.createdAt) || Date.now(),
-        waiters: [],
-        publishedWaiters: [],
-        typeConfig: resolved.type,
+      this.registry.create({
         ctx,
-        epoch: this.promptEpoch,
-        parentTurnStartedAt: disk.descriptor?.parentTurnStartedAt ?? 0,
-        collected: true,
-        sessionId: disk.sessionId,
-        sessionFile: disk.sessionFile,
+        type: resolved.type,
+        description: disk.descriptor?.label || resolved.type.displayName,
+        background: false,
         mode: "continuable",
-        depth: disk.descriptor?.depth ?? 1,
-      };
-      this.records.set(id, record);
+        // Depth budget is durable and monotone: a resumed child can never
+        // re-enter with less depth than this manager's factory implies.
+        depth: Math.max(disk.descriptor?.depth ?? 1, this.depth),
+        parentTurnStartedAt: disk.descriptor?.parentTurnStartedAt ?? 0,
+        hydrated: {
+          id: disk.descriptor?.agentId || disk.sessionId,
+          sessionId: disk.sessionId,
+          sessionFile: disk.sessionFile,
+          startedAt: Date.parse(disk.createdAt) || Date.now(),
+        },
+      });
     }
     this.emit();
-  }
-
-  private resolveLive(id: string): LiveRecord | undefined {
-    return this.records.get(id)
-      ?? [...this.records.values()].find((record) => record.sessionId === id);
-  }
-
-  runningCount(): number {
-    let count = 0;
-    for (const record of this.records.values()) {
-      if (record.status === "running") count += 1;
-    }
-    return count;
-  }
-
-  markCollected(id: string): void {
-    const record = this.resolveLive(id);
-    if (!record || !isTurnDone(record.status)) return;
-    record.collected = true;
-  }
-
-  uncollectedInEpoch(epoch: number): SubagentRecord[] {
-    return [...this.records.values()]
-      .filter((record) => record.epoch === epoch && !record.collected)
-      .map(publicRecord);
-  }
-
-  async waitUncollectedInEpoch(epoch: number, signal?: AbortSignal): Promise<"ok" | "aborted"> {
-    const live = [...this.records.values()].filter(
-      (record) => record.epoch === epoch && !record.collected && !isTurnDone(record.status),
-    );
-    if (live.length === 0) return signal?.aborted ? "aborted" : "ok";
-    if (signal?.aborted) return "aborted";
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (result: "ok" | "aborted") => {
-        if (settled) return;
-        settled = true;
-        signal?.removeEventListener("abort", onAbort);
-        resolve(result);
-      };
-      const onAbort = () => finish("aborted");
-      const onDone = () => {
-        if (signal?.aborted) {
-          finish("aborted");
-          return;
-        }
-        if (live.every((record) => isTurnDone(record.status))) finish("ok");
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      for (const record of live) record.waiters.push(onDone);
-      onDone();
-    });
   }
 
   spawn(input: {
@@ -178,42 +131,28 @@ export class NativeSubagentManager {
     thinkingSpec?: string;
     background: boolean;
     mode?: SubagentMode;
-    depth?: number;
     seed?: string;
   }): { id: string } {
-    const id = randomUUID();
-    const atCapacity = this.runningCount() >= maxConcurrent();
-    const record: LiveRecord = {
-      id,
-      type: input.type.name,
-      displayName: input.type.displayName,
-      description: input.description,
-      status: atCapacity ? "queued" : "running",
-      startedAt: Date.now(),
-      note: input.note,
-      waiters: [],
-      publishedWaiters: [],
-      queuedPrompt: atCapacity ? input.prompt : undefined,
-      typeConfig: input.type,
+    const record = this.registry.create({
       ctx: input.ctx,
+      type: input.type,
+      description: input.description,
+      note: input.note,
       modelSpec: input.modelSpec,
       thinkingSpec: input.thinkingSpec,
-        epoch: this.promptEpoch,
-        parentTurnStartedAt: this.currentTurnStartedAt,
-      collected: false,
+      background: input.background,
       mode: input.mode ?? "continuable",
-      depth: input.depth ?? 1,
+      depth: this.depth,
       seed: input.seed,
-    };
-    this.records.set(id, record);
-    this.emit();
-    if (!atCapacity) void this.start(record, input.prompt);
-    return { id };
+      queuedPrompt: input.prompt,
+      parentTurnStartedAt: this.currentTurnStartedAt,
+    });
+    if (record.status === "running") this.start(record, input.prompt);
+    return { id: record.id };
   }
 
   async waitPublished(id: string, signal?: AbortSignal): Promise<SubagentRecord> {
-    const record = this.resolveLive(id);
-    if (!record) throw new Error(`Agent not found: "${id}"`);
+    const record = this.requireRecord(id);
     if (record.sessionId || isHardStop(record.status)) return publicRecord(record);
     return new Promise((resolve) => {
       const onAbort = () => {
@@ -227,22 +166,31 @@ export class NativeSubagentManager {
           return;
         }
       }
-      record.publishedWaiters.push((snapshot) => {
+      record.publishedWaiters.push(() => {
         signal?.removeEventListener("abort", onAbort);
-        resolve(snapshot);
+        resolve(publicRecord(record));
       });
     });
   }
 
   async wait(id: string, signal?: AbortSignal): Promise<SubagentRecord> {
-    const record = this.resolveLive(id);
-    if (!record) throw new Error(`Agent not found: "${id}"`);
+    const record = this.requireRecord(id);
     if (isTurnDone(record.status)) return publicRecord(record);
     return new Promise((resolve) => {
-      const onAbort = () => { void this.abort(id); };
+      const onAbort = () => {
+        signal?.removeEventListener("abort", onAbort);
+        // Foreground wait aborted: one-shot children are killed; continuable
+        // children keep residency — only their current turn is interrupted.
+        if (record.mode === "one-shot") void this.kill(record.id);
+        else void this.interrupt(record.id);
+        resolve(publicRecord(record));
+      };
       if (signal) {
         signal.addEventListener("abort", onAbort, { once: true });
-        if (signal.aborted) onAbort();
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
       }
       record.waiters.push((snapshot) => {
         signal?.removeEventListener("abort", onAbort);
@@ -251,106 +199,44 @@ export class NativeSubagentManager {
     });
   }
 
-  private async prepareContinuation(id: string): Promise<LiveRecord> {
-    const record = this.resolveLive(id);
-    if (!record) throw new Error(`Agent not found: "${id}"`);
-    if (record.mode === "one-shot") {
-      throw new Error(`Agent "${id}" is one-shot and cannot be continued.`);
-    }
-    await this.ensureRun(record);
-    if (!record.run) throw new Error(`Agent "${id}" cannot be continued (status: ${record.status}).`);
-    record.collected = false;
-    record.epoch = this.promptEpoch;
-    record.parentTurnStartedAt = this.currentTurnStartedAt;
-    return record;
-  }
-
-  isResident(id: string): boolean {
-    return Boolean(this.resolveLive(id)?.run);
-  }
-
   /**
    * Queue a continuation without waiting for the child turn.
    * send_message uses this; resume / human follow-up still wait via followup().
    */
   async deliver(id: string, message: string): Promise<SubagentRecord> {
-    const record = await this.prepareContinuation(id);
-    if (record.status === "running") {
-      void record.run!.prompt(message).then(
-        (result: string) => this.settleDeliveredTurn(record, "completed", result),
-        (error: unknown) => this.settleDeliveredTurn(
-          record,
-          "error",
-          undefined,
-          error instanceof Error ? error.message : String(error),
-        ),
-      );
-      return publicRecord(record);
-    }
-    record.error = undefined;
-    record.result = undefined;
-    record.status = "running";
-    record.startedAt = Date.now();
-    record.completedAt = undefined;
-    this.emit();
-    void record.run!.prompt(message).then(
-      (result: string) => this.settleDeliveredTurn(record, "completed", result),
-      (error: unknown) => this.settleDeliveredTurn(
+    const record = this.prepareContinuation(id);
+    const turn = this.continueTurn(record, message);
+    void turn.catch((error: unknown) => {
+      this.registry.settle(
         record,
         "error",
         undefined,
         error instanceof Error ? error.message : String(error),
-      ),
-    );
+      );
+    });
     return publicRecord(record);
   }
 
-  private settleDeliveredTurn(
-    record: LiveRecord,
-    status: SubagentStatus,
-    result?: string,
-    error?: string,
-  ): void {
-    if (isHardStop(record.status)) return;
-    if (record.status === "running") {
-      this.finishTurn(record, status, result, error);
-      return;
-    }
-    record.result = result;
-    record.error = error;
-    record.completedAt = Date.now();
-    snapshotUsage(record);
-    this.emit();
-  }
-
   async followup(id: string, message: string, signal?: AbortSignal): Promise<SubagentRecord> {
-    const record = await this.prepareContinuation(id);
-    if (record.status === "running") {
-      await record.run!.prompt(message);
-      return publicRecord(record);
-    }
-    record.error = undefined;
-    record.result = undefined;
-    record.status = "running";
-    record.startedAt = Date.now();
-    record.completedAt = undefined;
-    this.emit();
+    const record = this.prepareContinuation(id);
     try {
-      const result = await record.run!.prompt(message);
-      if (signal?.aborted) {
-        this.finishTurn(record, "aborted", result, "Aborted.");
-      } else {
-        this.finishTurn(record, "completed", result);
-      }
+      await this.continueTurn(record, message);
     } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      this.finishTurn(record, "error", undefined, text);
+      this.registry.settle(
+        record,
+        "error",
+        undefined,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    if (signal?.aborted && record.status === "running") {
+      await this.interrupt(record.id);
     }
     return publicRecord(record);
   }
 
   async steer(id: string, message: string): Promise<string> {
-    const record = this.resolveLive(id);
+    const record = this.registry.resolve(id);
     if (!record) return `Agent not found: "${id}".`;
     if (record.status !== "running" || !record.run) {
       return `Agent "${id}" is not running (status: ${record.status}). Cannot steer.`;
@@ -359,11 +245,12 @@ export class NativeSubagentManager {
     return `Steering message delivered to ${id}.`;
   }
 
+  /** Stop the current turn only; the child stays resident for follow-up. */
   async interrupt(id: string): Promise<string> {
-    const record = this.resolveLive(id);
+    const record = this.registry.resolve(id);
     if (!record) return `Agent not found: "${id}".`;
     if (record.status === "queued") {
-      this.kill(record, "stopped", "Stopped before start.");
+      this.registry.settle(record, "stopped", undefined, "Stopped before start.");
       return `Agent ${id} stopped before start.`;
     }
     if (record.status !== "running" || !record.run) {
@@ -373,23 +260,85 @@ export class NativeSubagentManager {
     return `Interrupt requested for ${id}. The child stays available for follow-up.`;
   }
 
-  async abort(id: string): Promise<boolean> {
-    const record = this.resolveLive(id);
+  /** Parent Stop: interrupt in-flight child turns; resident children survive. */
+  async interruptAll(): Promise<void> {
+    await Promise.all(
+      this.registry.all()
+        .filter((record) => record.status === "running" && record.run)
+        .map((record) => record.run!.interrupt().catch(() => {})),
+    );
+  }
+
+  /** Hard stop: dispose the child session. The record can never run again. */
+  async kill(id: string): Promise<boolean> {
+    const record = this.registry.resolve(id);
     if (!record) return false;
-    if (record.status === "queued") {
-      this.kill(record, "stopped", "Stopped before start.");
-      return true;
-    }
-    if (record.run) {
-      try { void record.run.abort(); } catch { /* already gone */ }
-      record.run = undefined;
-    }
-    this.kill(record, "aborted", "Aborted.");
+    this.disposeRun(record);
+    this.registry.settle(record, "stopped", undefined, "Killed.");
     return true;
   }
 
-  async abortAll(): Promise<void> {
-    await Promise.all([...this.records.keys()].map((id) => this.abort(id)));
+  /** Session teardown: dispose every child, settle live records so waiters exit. */
+  teardown(): void {
+    if (this.tornDown) return;
+    this.tornDown = true;
+    for (const record of this.registry.all()) {
+      this.disposeRun(record);
+      if (!isTurnDone(record.status)) {
+        this.registry.settle(record, "stopped", undefined, "Session torn down.");
+      }
+    }
+  }
+
+  private requireRecord(id: string): LiveRecord {
+    const record = this.registry.resolve(id);
+    if (!record) throw new Error(`Agent not found: "${id}"`);
+    return record;
+  }
+
+  private prepareContinuation(id: string): LiveRecord {
+    const record = this.requireRecord(id);
+    if (record.mode === "one-shot") {
+      throw new Error(`Agent "${id}" is one-shot and cannot be continued.`);
+    }
+    record.parentTurnStartedAt = this.currentTurnStartedAt;
+    return record;
+  }
+
+  /** Serialized per-child prompt turn; errors settle as "error", never throw past the lock. */
+  private continueTurn(record: LiveRecord, message: string): Promise<void> {
+    return this.registry.withLock(record, async () => {
+      await this.ensureRun(record);
+      if (!record.run || isHardStop(record.status)) {
+        throw new Error(`Agent "${record.id}" cannot be continued (status: ${record.status}).`);
+      }
+      this.registry.beginTurn(record);
+      const outcome = await record.run.prompt(message);
+      this.settleOutcome(record, outcome);
+    });
+  }
+
+  private settleOutcome(record: LiveRecord, outcome: ChildTurnResult): void {
+    if (outcome.stopReason === "error") {
+      this.registry.settle(record, "error", outcome.text, outcome.error ?? "child failed");
+      return;
+    }
+    // "aborted" here means interrupt/parent-Stop ended the turn — the child
+    // stays resident, so the turn completes with whatever text landed.
+    this.registry.settle(record, "completed", outcome.text);
+  }
+
+  private handleSettled(record: LiveRecord): void {
+    snapshotUsage(record);
+    if (record.mode === "one-shot") this.disposeRun(record);
+    // Only background work wakes the parent; foreground results return inline.
+    if (!this.tornDown && record.background) this.onSettle?.(publicRecord(record));
+  }
+
+  private disposeRun(record: LiveRecord): void {
+    if (!record.run) return;
+    try { record.run.dispose(); } catch { /* already gone */ }
+    record.run = undefined;
   }
 
   private descriptorFor(record: LiveRecord): SubagentDescriptor {
@@ -416,7 +365,7 @@ export class NativeSubagentManager {
       descriptor: record.sessionFile ? undefined : this.descriptorFor(record),
       depth: record.depth,
     });
-    if (isHardStop(record.status)) {
+    if (isHardStop(record.status) || this.tornDown) {
       try { run.dispose(); } catch { /* already gone */ }
       return;
     }
@@ -437,129 +386,36 @@ export class NativeSubagentManager {
       this.emit();
     });
     snapshotUsage(record);
-    this.notifyPublished(record);
+    this.registry.flushPublished(record);
     this.onPublish?.(publicRecord(record));
     this.emit();
   }
 
-  private async start(record: LiveRecord, prompt: string): Promise<void> {
-    if (isHardStop(record.status)) return;
-    record.status = "running";
-    record.startedAt = Date.now();
-    this.emit();
-    try {
-      await this.ensureRun(record);
-      if (!record.run) return;
-      const text = record.seed ? `${record.seed}\n\n${prompt}` : prompt;
-      record.seed = undefined;
-      const result = await record.run.prompt(text);
-      this.finishTurn(record, "completed", result);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.finishTurn(record, "error", undefined, message);
-    }
-  }
-
-  private finishTurn(
-    record: LiveRecord,
-    status: SubagentStatus,
-    result?: string,
-    error?: string,
-  ): void {
-    if (isHardStop(record.status)) return;
-    record.status = status;
-    record.result = result;
-    record.error = error;
-    record.completedAt = Date.now();
-    snapshotUsage(record);
-    if (record.mode === "one-shot") {
-      try { record.run?.dispose(); } catch { /* already gone */ }
-      record.run = undefined;
-    }
-    const snapshot = publicRecord(record);
-    this.notifyPublished(record);
-    for (const waiter of record.waiters.splice(0)) waiter(snapshot);
-    this.emit();
-    this.pumpQueue();
-  }
-
-  private kill(record: LiveRecord, status: "stopped" | "aborted", error: string): void {
-    if (isHardStop(record.status)) return;
-    record.status = status;
-    record.error = error;
-    record.completedAt = Date.now();
-    snapshotUsage(record);
-    try { record.run?.dispose(); } catch { /* already gone */ }
-    record.run = undefined;
-    const snapshot = publicRecord(record);
-    this.notifyPublished(record);
-    for (const waiter of record.waiters.splice(0)) waiter(snapshot);
-    this.emit();
-    this.pumpQueue();
-  }
-
-  private notifyPublished(record: LiveRecord): void {
-    if (record.publishedWaiters.length === 0) return;
-    const snapshot = publicRecord(record);
-    for (const waiter of record.publishedWaiters.splice(0)) waiter(snapshot);
-  }
-
-  private pumpQueue(): void {
-    if (this.runningCount() >= maxConcurrent()) return;
-    for (const record of this.records.values()) {
-      if (record.status !== "queued" || !record.queuedPrompt) continue;
-      const prompt = record.queuedPrompt;
-      record.queuedPrompt = undefined;
-      void this.start(record, prompt);
-      return;
-    }
+  private start(record: LiveRecord, prompt: string): void {
+    const turn = this.registry.withLock(record, async () => {
+      if (isTurnDone(record.status) && record.status !== "queued") return;
+      if (isHardStop(record.status)) return;
+      this.registry.beginTurn(record);
+      try {
+        await this.ensureRun(record);
+        if (!record.run) return; // hard-stopped or torn down mid-ensure
+        const text = record.seed ? `${record.seed}\n\n${prompt}` : prompt;
+        record.seed = undefined;
+        const outcome = await record.run.prompt(text);
+        this.settleOutcome(record, outcome);
+      } catch (error) {
+        this.registry.settle(
+          record,
+          "error",
+          undefined,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+    void turn.catch(() => {});
   }
 
   private emit(): void {
     this.onChange?.();
-  }
-}
-
-function isHardStop(status: SubagentStatus): boolean {
-  return status === "stopped" || status === "aborted";
-}
-
-function isTurnDone(status: SubagentStatus): boolean {
-  return status === "completed" || status === "error" || isHardStop(status);
-}
-
-function publicRecord(record: LiveRecord): SubagentRecord {
-  return {
-    id: record.id,
-    type: record.type,
-    displayName: record.displayName,
-    description: record.description,
-    status: record.status,
-    result: record.result,
-    error: record.error,
-    activity: record.activity,
-    contextPercent: record.contextPercent,
-    contextTokens: record.contextTokens,
-    startedAt: record.startedAt,
-    completedAt: record.completedAt,
-    note: record.note,
-    sessionId: record.sessionId,
-    sessionFile: record.sessionFile,
-    mode: record.mode,
-    depth: record.depth,
-    summary: record.typeConfig.description,
-    parentTurnStartedAt: record.parentTurnStartedAt,
-  };
-}
-
-function snapshotUsage(record: LiveRecord): void {
-  const usage = record.run?.getContextUsage();
-  const percent = usage?.percent;
-  if (typeof percent === "number" && Number.isFinite(percent)) {
-    record.contextPercent = Math.max(0, Math.min(100, percent));
-  }
-  const tokens = usage?.tokens;
-  if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
-    record.contextTokens = tokens;
   }
 }

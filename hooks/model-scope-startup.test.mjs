@@ -42,9 +42,10 @@ test("model-list refresh never overwrites an explicit thinking level", () => {
 
   // "auto" is the sentinel for "user has not chosen"; every refresh-time write
   // to the thinking level must sit inside a block guarded by it. Brace-matching
-  // rather than "nearest if" so a nested write still counts as covered.
+  // rather than "nearest if" so a nested write still counts as covered. The
+  // guard may read the state value or its ref — the condition is what is pinned.
   const guarded = [];
-  for (const guard of loadModels.matchAll(/thinkingLevel === "auto"/g)) {
+  for (const guard of loadModels.matchAll(/thinkingLevel(?:Ref\.current)? === "auto"/g)) {
     const open = loadModels.indexOf("{", guard.index);
     if (open === -1) continue;
     let depth = 0;
@@ -71,7 +72,7 @@ test("model-list refresh never overwrites an explicit thinking level", () => {
 });
 
 test("new-session startup omits a thinking level the user never chose", () => {
-  const ensure = slice("const ensureNewSession", "const loadCustomSlashCommands");
+  const ensure = slice("const ensureNewSession", "const loadSlashCommands");
 
   // Sending "auto" would pin it server-side as though it were a real choice.
   assert.match(ensure, /thinkingLevel !== "auto" \? \{ thinkingLevel \} : \{\}/);

@@ -152,13 +152,16 @@ lib/
   rpc-session-tool-adoption.ts  startRpcSession toolNames → allow-list seed
   rpc-registry.ts     globalThis session registry + idle timeout
   rpc-session-start.ts  startRpcSession() — creates AgentSession in the heavy runtime
+  pty-sessions.ts       process-local PTY registry (Terminal UI + agent background processes)
+  background-jobs.ts    background bash job state machine (harness parity, heavy runtime)
+  agent-job-tools.ts    job_output / job_list / job_kill agent tools
   tool-presentation.ts     tool cards + attachPresentationToMessages
   tool-presenters/         exact-name presenters (SDK-free)
   conversation-nodes.ts    assembleTranscript
   session-projections.ts   fold todos/title/tokens/context
   ensure-builtin-packages.ts  migrate legacy package settings + prewarm builtin extensions
   builtin-extensions.ts       heavy package paths + first-party extensionFactories
-  first-party/                inline todo + ask_user_question (no jiti packages)
+  first-party/                inline todo + ask_user_question + subagents + jobs-notify (no jiti packages)
   browser-bridge.ts   reverse-IPC client: heavy-runtime tools → main-process browser pool
   agent-browser-tool.ts  agent `browser` tool (navigate / snapshot-by-ref / click / fill / screenshot)
   desktop-browser.ts  typed accessor for window.raincodeDesktop.browser (renderer side)
@@ -206,8 +209,11 @@ hooks/
 - `globalThis` survives Next.js hot-reload; plain module-level Map does not
 - Idle timeout: 10 minutes. Concurrent `startRpcSession()` calls share a single start Promise (`globalThis.__raincodeStartLocks`)
 
-### Background subagents cannot settle the parent turn
-`run_in_background` only unblocks that tool call. `lib/first-party/subagents` waits on `agent_end` and injects uncollected results as a hidden `subagent-results` follow-up so the parent loop continues. Do not add a second poller or an `isRunning()` child check for this. A child `report` is a separate parent message (`subagent-report`), not a second settlement path. After a turn the child session stays open for `send_message` / `resume`; only parent abort/shutdown dispose it. One-shot `subagent_fork` disposes after the turn. Child transcripts open via `?parent=` on GET `/api/sessions/[id]` and human follow-up goes through RPC `subagent_followup` on the parent — do not list `tasks/` in the sidebar or point `ChatWindow` at a child.
+### Background subagents never block the parent turn
+`run_in_background` returns immediately; the parent turn ends normally. Finished results reach the parent through a single delivery path (`lib/first-party/subagents/delivery.ts`): collected non-blockingly at the next `agent_end` while the parent is busy, or a budgeted wake (`followUp` + `triggerTurn`, `MAX_CONSECUTIVE_WAKES = 3`, refilled by user input) while idle. Every result is reported at most once (`registry.claimReport`). Do not add a poller, an `isRunning()` check, or a blocking wait for this. A child `report` is a separate parent message (`subagent-report`), not a second settlement path. Record state transitions are first-wins in `registry.ts` (`settle` is the only flip point — it also pumps the concurrency queue); prompt turns on one child serialize through a per-record promise-chain lock, so `send_message`/`resume` can't interleave. After a turn the child session stays resident for `send_message` / `resume`; destruction happens only via `kill_subagent` / parent Stop (which interrupts turns but keeps residency) / session teardown. One-shot children (`subagent_fork`, `background_mode: "one-shot"`) dispose on settle. Teardown is the single `wrapper.onDestroy` path (`teardownSubagentsForSession` in `host.ts`, wired in `rpc-session-start.ts`) — it covers `shutdown()`, `destroy()`, DELETE, and fork. Nesting depth is real (`MAX_SUBAGENT_DEPTH = 3`): the factory carries the depth (`createSubagentsInlineExtension({depth})`), the descriptor persists it, and hydrate keeps it monotone. Child failures surface as `error` status + `isError` tool results — child prompt errors are never swallowed into "completed". Child transcripts open via `?parent=` on GET `/api/sessions/[id]` and human follow-up goes through RPC `subagent_followup` on the parent — do not list `tasks/` in the sidebar or point `ChatWindow` at a child.
+
+### Background bash jobs (deepseek-harness parity)
+`bash background: true` spawns a PTY (`lib/pty-sessions.ts`) and registers a job (`lib/background-jobs.ts`, single owner of job state: `running | completed | killed`). The 2.5s startup window stays: a crash inside it returns the real exit code inline (notice claimed, nothing more is sent); a survivor detaches with a job id (`bash-N`). Nonzero exits settle as `completed` + exit code — only `job_kill` / teardown settle as `killed`. Completion notices share the subagent delivery mechanism (`lib/first-party/turn-delivery.ts` + `jobs-notify.ts`): collected at `agent_end` while busy, budgeted wake while idle, at-most-once via `claimJobReport`. The agent reads output with `job_output` (absolute-offset incremental read of PTY history, bounded `wait`), lists with `job_list`, stops with `job_kill`. Per-owner cap `MAX_BACKGROUND_JOBS_PER_SESSION = 8` rejects instead of queueing. Three teardown paths, all funnelling through `destroyPtySession`: `job_kill`; `wrapper.onDestroy` → `teardownJobsForSession` (jobs die with their owner session); app quit → `destroyAllPtySessions()` from `daemon/ipc-host.mjs`'s SIGTERM/SIGINT/disconnect handler (main SIGTERMs, SIGKILLs after 3s; the sweep waits out the 1.5s kill grace). `pty-sessions.ts` keeps no idle timer (it killed quiet dev servers) and `pruneIfNeeded` only reaps exited corpses — a full board of live sessions rejects the create. `destroyPtySession` removes the registry row first and keeps listeners attached until the exit event lands, so per-session SSE closes cleanly and jobs settle.
 
 ### Fork must destroy the wrapper immediately
 `AgentSession.fork()` **mutates the wrapper's inner state in-place** — after fork, `inner.sessionId` is the *new* session's id. If the wrapper stays alive in the registry under the old id, the next request gets the already-forked state and subsequent forks produce a corrupt `parentSession` chain.

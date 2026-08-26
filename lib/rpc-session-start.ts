@@ -28,6 +28,8 @@ import {
 import { resolveToolAdoption } from "./rpc-session-tool-adoption";
 import { applyRepairToMessages, shouldRepairOnOpen } from "./session-tool-repair";
 import { browserMainRequest, isBrowserBridgeAvailable } from "./browser-bridge";
+import { teardownSubagentsForSession } from "./first-party/subagents/host";
+import { teardownJobsForSession } from "./background-jobs";
 import { pruneEphemeralContextMessages } from "./ephemeral-context";
 import { AGENT_MODE_BRIEF_CUSTOM_TYPE, MEMORY_CONTEXT_CUSTOM_TYPE } from "./types";
 import type { AgentMessage } from "./types";
@@ -218,6 +220,12 @@ export async function startRpcSession(
       if (isBrowserBridgeAvailable()) {
         void browserMainRequest("destroy", { viewId: realSessionId }).catch(() => {});
       }
+      // Same single teardown point for the subagent tree (host registry +
+      // resident child sessions) — shutdown() and destroy() both land here.
+      teardownSubagentsForSession(realSessionId);
+      // Background bash jobs die with their owner session (harness parity):
+      // kill the PTYs, suppress their notices, drop the records.
+      teardownJobsForSession(realSessionId);
     });
     registry.set(realSessionId, wrapper);
     // When the caller keyed the start lock by a non-temp id that differs from

@@ -1225,7 +1225,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
        });
        setNewSessionModel(reconciled.model);
        newSessionModelRef.current = reconciled.model;
-       if (reconciled.thinkingLevel !== thinkingLevelRef.current) {
+       // "auto" is the sentinel for "user has not chosen": refresh-time writes
+       // must never move an explicit thinking level, even when the reconciler
+       // resets the model (e.g. the picked model fell out of the catalog).
+       if (reconciled.thinkingLevel !== thinkingLevelRef.current && thinkingLevelRef.current === "auto") {
          setThinkingLevel(reconciled.thinkingLevel);
          thinkingLevelRef.current = reconciled.thinkingLevel;
        }

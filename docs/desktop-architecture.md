@@ -52,6 +52,9 @@ structural `rpc-running` reader), or utility-model completion. Chat content
 (`/api/sessions/[id]`) is heavy: transcripts are parsed with the SDK's
 `SessionManager` (`lib/session-entries.ts`). The session *list* is light —
 `lib/session-reader.ts` reads `.jsonl` off disk and is deliberately kept SDK-free.
+A route is also **heavy** when it shares process-local state with the agent
+runtime — `/api/cwd/pty*` reads and writes the PTY registry that the agent bash
+tool populates, which is meaningless in the light process.
 
 ### Light (verified SDK-free)
 
@@ -79,6 +82,7 @@ structural `rpc-running` reader), or utility-model completion. Chat content
 | `/api/sessions/[id]*`, `/api/agent/*` | session entries + RPC |
 | `/api/workspace-journal` | shares the in-memory turn journal with agent write/edit tools |
 | `/api/advisor`, `/api/memory-review`, `/api/collab*` | utility model / SDK collab |
+| `/api/cwd/pty*` | PTY registry is process-local to the heavy runtime — the agent bash tool creates sessions there, so Terminal UI routes must share that process (pinned ahead of the `/api/cwd/` light prefix in `roleForPath`) |
 
 Covered by `electron/runtime-host.test.mjs`. When adding a route: if it can run
 with only `lib/agent-dir` + fs/network, put it on light; if it imports

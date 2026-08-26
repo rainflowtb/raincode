@@ -10,7 +10,7 @@ export const SUBAGENT_TOOL_NAMES = [
   "send_message",
   "list_agents",
   "interrupt_agent",
-  "interrupt_subagent",
+  "kill_subagent",
 ] as const;
 
 export const READ_ONLY_TOOLS = ["read", "bash", "grep", "find", "ls"] as const;

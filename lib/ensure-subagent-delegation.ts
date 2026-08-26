@@ -50,8 +50,8 @@ Spawn a subagent whenever any of these apply:
 
 - Give each subagent a complete, self-contained prompt — it does not see this conversation.
 - Prefer delegating over doing everything inline. When in doubt, delegate.
-- \`run_in_background\` only unblocks that tool call so you can launch several in parallel. Call \`get_subagent_result\` with \`wait: true\` when you need a result mid-turn. Do not write the final user-facing answer until results are in — if you stop early, the runtime delivers uncollected results and continues the turn.
-- \`resume\` / \`send_message\` continues that child. \`list_agents\` recalls ids. \`interrupt_agent\` stops the current turn but keeps the child. \`subagent_fork\` is one-shot and already sees this conversation.
+- \`run_in_background\` only unblocks that tool call so you can launch several in parallel. When a background agent finishes, its result is delivered to you automatically (collected at the end of your turn, or waking you when idle) — do not write the final user-facing answer until expected results are in. Call \`get_subagent_result\` with \`wait: true\` when you need a result mid-turn; the wait is bounded by \`timeout_ms\` (default 30s).
+- \`resume\` / \`send_message\` continues that child. \`list_agents\` recalls ids. \`interrupt_agent\` stops the current turn but keeps the child. \`kill_subagent\` disposes a child for good. \`subagent_fork\` is one-shot and already sees this conversation.
 ${AGENTS_BLOCK_END}`;
 
 // ── Agent override files ─────────────────────────────────────────────────────

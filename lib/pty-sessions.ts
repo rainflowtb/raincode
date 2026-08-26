@@ -51,11 +51,15 @@ interface PtySession {
   exited: boolean;
   exitCode?: number;
   published: boolean;
-  publishTimer: ReturnType<typeof setTimeout> | null;
+  /** Set by destroyPtySession so a late onExit cannot resurrect the row. */
+  destroyed: boolean;
   listeners: Set<PtyListener>;
-  idleTimer: ReturnType<typeof setTimeout> | null;
   history: string[];
   historyBytes: number;
+  /** Chars evicted from the head of history — absolute read offsets stay stable. */
+  historyDropped: number;
+  /** Absolute-offset incremental read for job_output. */
+  readHistory: (fromOffset: number) => { text: string; nextOffset: number; lossy: boolean };
 }
 
 declare global {
@@ -64,7 +68,6 @@ declare global {
   var __raincodePtyRegistryListeners: Set<RegistryListener> | undefined;
 }
 
-const IDLE_MS = 30 * 60 * 1000;
 const AGENT_EXIT_KEEP_MS = 30 * 60 * 1000;
 const USER_EXIT_KEEP_MS = 5_000;
 const MAX_SESSIONS = 12;
@@ -226,11 +229,6 @@ function emitRegistry(event: { type: "upsert" | "remove"; session?: PtySessionIn
 
 function touch(session: PtySession): void {
   session.lastActiveAt = Date.now();
-  if (session.idleTimer) clearTimeout(session.idleTimer);
-  session.idleTimer = setTimeout(() => {
-    destroyPtySession(session.id);
-  }, IDLE_MS);
-  session.idleTimer.unref?.();
 }
 
 function pushHistory(session: PtySession, chunk: string): void {
@@ -239,7 +237,10 @@ function pushHistory(session: PtySession, chunk: string): void {
   session.historyBytes += chunk.length;
   while (session.historyBytes > MAX_HISTORY_BYTES && session.history.length > 1) {
     const removed = session.history.shift();
-    if (removed) session.historyBytes -= removed.length;
+    if (removed) {
+      session.historyBytes -= removed.length;
+      session.historyDropped += removed.length;
+    }
   }
 }
 
@@ -253,12 +254,18 @@ function emit(session: PtySession, event: PtyEvent): void {
   }
 }
 
+/**
+ * Reap exited corpses when at capacity. Never kills a live process — a full
+ * board of running sessions rejects the create instead (caller surfaces it).
+ */
 function pruneIfNeeded(): void {
   const map = sessions();
   if (map.size < MAX_SESSIONS) return;
-  const ordered = [...map.values()].sort((a, b) => a.lastActiveAt - b.lastActiveAt);
-  while (map.size >= MAX_SESSIONS && ordered.length) {
-    const oldest = ordered.shift();
+  const corpses = [...map.values()]
+    .filter((session) => session.exited)
+    .sort((a, b) => a.lastActiveAt - b.lastActiveAt);
+  while (map.size >= MAX_SESSIONS && corpses.length) {
+    const oldest = corpses.shift();
     if (oldest) destroyPtySession(oldest.id);
   }
 }
@@ -310,14 +317,8 @@ export async function createPtySession(options: {
   agentSessionId?: string;
   title?: string;
   env?: NodeJS.ProcessEnv;
-  /**
-   * Whether Terminal UI should list this session immediately.
-   * - true: show now (user shells / known long-running agent cmds)
-   * - false: hidden until publishPtySession() (short agent cmds stay hidden)
-   * - "delayed": publish after publishAfterMs if still running
-   */
-  publish?: boolean | "delayed";
-  publishAfterMs?: number;
+  /** Whether the Terminal UI lists this session immediately. Default: user shells. */
+  publish?: boolean;
 }): Promise<PtySessionInfo> {
   const cwd = await assertPtyCwdAllowed(options.cwd);
   const cols = Math.max(20, Math.min(400, Math.floor(options.cols ?? 80)));
@@ -328,9 +329,13 @@ export async function createPtySession(options: {
   const command = options.command?.trim() || undefined;
   const title = options.title?.trim()
     || (command ? titleFromCommand(command) : undefined);
-  const publishMode = options.publish ?? (source === "user" ? true : false);
-  const publishedInitially = publishMode === true;
   pruneIfNeeded();
+  if (sessions().size >= MAX_SESSIONS) {
+    throw Object.assign(
+      new Error(`Too many terminal sessions (${MAX_SESSIONS}). Close one in the Terminal panel and retry.`),
+      { status: 429 },
+    );
+  }
 
   const id = randomBytes(8).toString("hex");
   let term: IPty;
@@ -394,12 +399,19 @@ export async function createPtySession(options: {
     createdAt: Date.now(),
     lastActiveAt: Date.now(),
     exited: false,
-    published: publishedInitially,
-    publishTimer: null,
+    published: options.publish ?? (source === "user"),
+    destroyed: false,
     listeners: new Set(),
-    idleTimer: null,
     history: [],
     historyBytes: 0,
+    historyDropped: 0,
+    readHistory(fromOffset: number) {
+      const joined = session.history.join("");
+      const base = session.historyDropped;
+      const lossy = fromOffset < base;
+      const start = Math.max(fromOffset, base) - base;
+      return { text: joined.slice(start), nextOffset: base + joined.length, lossy };
+    },
   };
 
   if (command) {
@@ -415,13 +427,11 @@ export async function createPtySession(options: {
   term.onExit(({ exitCode, signal }) => {
     session.exited = true;
     session.exitCode = exitCode;
-    if (session.publishTimer) {
-      clearTimeout(session.publishTimer);
-      session.publishTimer = null;
-    }
     emit(session, { type: "exit", exitCode, signal: signal ?? undefined });
-    // Only surface exit updates for sessions the UI already knows about.
-    if (session.published) {
+    session.listeners.clear();
+    // Only surface exit updates for sessions the UI already knows about —
+    // and never resurrect a row that destroyPtySession already removed.
+    if (session.published && !session.destroyed) {
       emitRegistry({ type: "upsert", session: toInfo(session) });
     }
     const keepMs = session.source === "agent" ? AGENT_EXIT_KEEP_MS : USER_EXIT_KEEP_MS;
@@ -431,34 +441,10 @@ export async function createPtySession(options: {
   sessions().set(id, session);
   touch(session);
 
-  if (publishMode === "delayed") {
-    const delay = Math.max(250, Math.floor(options.publishAfterMs ?? 2000));
-    session.publishTimer = setTimeout(() => {
-      session.publishTimer = null;
-      publishPtySession(id);
-    }, delay);
-    session.publishTimer.unref?.();
-  }
-
   const info = toInfo(session);
   if (session.published) {
     emitRegistry({ type: "upsert", session: info });
   }
-  return info;
-}
-
-/** Make a hidden agent PTY visible in the Terminal workspace. */
-export function publishPtySession(id: string): PtySessionInfo | null {
-  const session = sessions().get(id);
-  if (!session || session.exited) return null;
-  if (session.publishTimer) {
-    clearTimeout(session.publishTimer);
-    session.publishTimer = null;
-  }
-  if (session.published) return toInfo(session);
-  session.published = true;
-  const info = toInfo(session);
-  emitRegistry({ type: "upsert", session: info });
   return info;
 }
 
@@ -604,11 +590,20 @@ export function destroyPtySession(id: string): void {
   const session = sessions().get(id);
   if (!session) return;
   sessions().delete(id);
-  if (session.idleTimer) clearTimeout(session.idleTimer);
-  if (session.publishTimer) clearTimeout(session.publishTimer);
-  session.listeners.clear();
+  session.destroyed = true;
   if (session.published) {
     emitRegistry({ type: "remove", id });
   }
+  if (session.exited) {
+    session.listeners.clear();
+    return;
+  }
+  // Listeners stay attached: the onExit closure emits the exit event to them
+  // (attached SSE streams close cleanly, background jobs settle), then clears.
   killPtyProcessTree(session);
+}
+
+/** App-quit sweep: kill every PTY in this process so no orphan holds a port. */
+export function destroyAllPtySessions(): void {
+  for (const id of [...sessions().keys()]) destroyPtySession(id);
 }

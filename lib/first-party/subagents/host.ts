@@ -36,3 +36,16 @@ export function unregisterChildRun(sessionId: string | undefined, run?: ChildRun
 export function getChildRun(sessionId: string): { parentSessionId: string; run: ChildRun } | undefined {
   return childRuns.get(sessionId);
 }
+
+/**
+ * Single teardown path for a session's whole subagent tree (wrapper.onDestroy
+ * fires on both shutdown() and destroy()). Children teardown first.
+ */
+export function teardownSubagentsForSession(parentSessionId: string): void {
+  for (const [childId, entry] of [...childRuns]) {
+    if (entry.parentSessionId === parentSessionId) teardownSubagentsForSession(childId);
+  }
+  const manager = managers.get(parentSessionId);
+  managers.delete(parentSessionId);
+  try { manager?.teardown(); } catch { /* teardown is best-effort */ }
+}

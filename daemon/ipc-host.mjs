@@ -122,7 +122,31 @@ process.on("message", (message) => {
   }
 });
 
-process.on("disconnect", () => process.exit(0));
+// App-quit sweep: the main process SIGTERMs us (SIGKILL after 3s) — kill every
+// PTY this runtime owns first so no orphaned dev server keeps holding a port.
+// PTY routes are pinned heavy, so the light runtime has nothing to sweep.
+let sweepStarted = false;
+async function sweepPtysAndExit() {
+  if (sweepStarted) return;
+  sweepStarted = true;
+  try {
+    if (role !== "light") {
+      const ptyModule = await loadModule(libModule("pty-sessions"));
+      if (ptyModule.listPtySessions().length > 0) {
+        ptyModule.destroyAllPtySessions();
+        // Cover killPtyProcessTree's 1.5s SIGTERM→SIGKILL grace before exiting.
+        await new Promise((resolve) => setTimeout(resolve, 1_800));
+      }
+    }
+  } catch (error) {
+    console.error("[runtime] pty sweep failed:", error);
+  }
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => { void sweepPtysAndExit(); });
+process.on("SIGINT", () => { void sweepPtysAndExit(); });
+process.on("disconnect", () => { void sweepPtysAndExit(); });
 
 const role = process.env.RAINCODE_RUNTIME_ROLE || "heavy";
 send({ t: "ready" });
