@@ -23,6 +23,11 @@ export const ChatWindow = dynamic(() => import("../ChatWindow").then((m) => m.Ch
   loading: LazyPanelFallback,
 });
 
+export const ChildChatPane = dynamic(() => import("../chat-window/ChildChatPane").then((m) => m.ChildChatPane), {
+  ssr: false,
+  loading: LazyPanelFallback,
+});
+
 export const FileViewer = dynamic(() => import("../FileViewer").then((m) => m.FileViewer), {
   ssr: false,
   loading: LazyPanelFallback,

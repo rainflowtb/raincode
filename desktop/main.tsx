@@ -6,12 +6,17 @@
  * the query string), and this is what makes shared read-only links openable
  * for LAN browsers when LAN access is enabled.
  */
-import { StrictMode, Suspense } from "react";
+import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell } from "@/components/AppShell";
-import { CollabViewer } from "@/components/CollabViewer";
 import "@/app/globals.css";
 import "@/app/mobile.css";
+
+// Collab links are rare; importing the viewer eagerly drags the whole
+// markdown/message-render stack into the first-paint chunk.
+const CollabViewer = lazy(() =>
+  import("@/components/CollabViewer").then((m) => ({ default: m.CollabViewer })),
+);
 
 const el = document.getElementById("root");
 if (!el) {

@@ -831,7 +831,7 @@ async function bootstrap() {
   // from the main process, so the runtime's multi-second SDK load can only delay
   // data, never rendering.
   bootRevealPending = true;
-  createSplashWindow("Starting Pi…");
+  createSplashWindow("Starting RainCode…");
 
   const bootStarted = Date.now();
   serveAppProtocol(path.join(appRoot, "desktop-dist"));

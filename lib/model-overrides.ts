@@ -3,9 +3,10 @@
  * Stored under ~/.raincode/model-overrides.json as "provider/modelId" → fields.
  * Used when official catalog does not supply thinkingLevelMap / etc.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { readJsonFileCached } from "./json-file-cache";
 import type { ThinkingLevelMap } from "./thinking-level-map";
 
 export type ModelOverrideFields = {
@@ -25,14 +26,9 @@ function modelRef(provider: string, modelId: string): string {
 }
 
 function readAll(path: string): Record<string, ModelOverrideFields> {
-  if (!existsSync(path)) return {};
-  try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    return raw as Record<string, ModelOverrideFields>;
-  } catch {
-    return {};
-  }
+  const raw = readJsonFileCached<unknown>(path);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return raw as Record<string, ModelOverrideFields>;
 }
 
 function writeAll(path: string, data: Record<string, ModelOverrideFields>): void {
@@ -60,7 +56,8 @@ export function setModelOverride(
   path?: string,
 ): ModelOverrideFields {
   const file = overridesPath(path);
-  const all = readAll(file);
+  // Shallow copy — never mutate the shared cached object.
+  const all = { ...readAll(file) };
   const key = modelRef(provider, modelId);
   const next: ModelOverrideFields = { ...(all[key] ?? {}), ...patch };
   // Drop empty thinking maps

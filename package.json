@@ -1,6 +1,6 @@
 {
   "name": "raincode",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Local coding-agent workspace — desktop app:// + dual IPC runtimes, or browser UI",
   "homepage": "https://github.com/rainflowtb/raincode-desktop#readme",
   "repository": {

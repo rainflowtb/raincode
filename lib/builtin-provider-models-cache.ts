@@ -8,10 +8,11 @@
  * Disabled flags are NOT the source of truth here — re-applied from
  * disabled-models.json on every read so toggles stay instant (light).
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { mkdirSync, renameSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { getAgentDir } from "./agent-dir";
 import { getDisabledModelRefs } from "./disabled-models";
+import { readJsonFileCached } from "./json-file-cache";
 import type { BuiltinProviderModelRow } from "./builtin-provider-models";
 
 const CACHE_VERSION = 1;
@@ -37,15 +38,16 @@ function emptyFile(): CacheFile {
 }
 
 function readFile(path: string): CacheFile {
-  if (!existsSync(path)) return emptyFile();
-  try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<CacheFile>;
-    if (!raw || typeof raw !== "object" || raw.version !== CACHE_VERSION) return emptyFile();
-    if (!raw.providers || typeof raw.providers !== "object") return emptyFile();
-    return { version: CACHE_VERSION, providers: raw.providers };
-  } catch {
-    return emptyFile();
-  }
+  const raw = readJsonFileCached<Partial<CacheFile>>(path);
+  if (!raw || typeof raw !== "object" || raw.version !== CACHE_VERSION) return emptyFile();
+  if (!raw.providers || typeof raw.providers !== "object") return emptyFile();
+  return { version: CACHE_VERSION, providers: raw.providers };
+}
+
+/** Mutable copy for write paths — never mutate the shared cached object. */
+function readFileForWrite(path: string): CacheFile {
+  const file = readFile(path);
+  return { version: file.version, providers: { ...file.providers } };
 }
 
 function writeFileAtomic(path: string, data: CacheFile): void {
@@ -130,7 +132,7 @@ export function writeBuiltinProviderModelsCache(
   const id = provider.trim();
   if (!id) return;
   const path = cachePath(options?.path);
-  const file = readFile(path);
+  const file = readFileForWrite(path);
   file.providers[id] = {
     displayName: payload.displayName,
     updatedAt: Date.now(),
@@ -147,7 +149,7 @@ export function clearBuiltinProviderModelsCache(
   const id = provider.trim();
   if (!id) return;
   const path = cachePath(options?.path);
-  const file = readFile(path);
+  const file = readFileForWrite(path);
   if (!(id in file.providers)) return;
   delete file.providers[id];
   writeFileAtomic(path, file);

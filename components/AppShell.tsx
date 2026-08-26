@@ -24,7 +24,6 @@ import { FileViewerModal, type ViewerFileTarget } from "./FileViewerModal";
 import { GitHistory } from "./GitHistory";
 import { hydrateAppearanceFromServer } from "@/lib/appearance-store";
 import { SessionInspectDialogs } from "./session-inspect/SessionInspectDialogs";
-import { ChildChatPane } from "./chat-window/ChildChatPane";
 import { useLocale } from "@/hooks/useLocale";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getFileName } from "@/lib/file-paths";
@@ -48,6 +47,7 @@ import { Icon } from "./Icon";
 import {
   BrowserPanel,
   ChatWindow,
+  ChildChatPane,
   ContextPanel,
   GitPanel,
   SettingsPage,

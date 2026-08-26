@@ -220,6 +220,21 @@ async function runDeferredBoot() {
         } catch (error) {
           console.error("[runtime] models route warm failed:", error);
         }
+        try {
+          // First session open resolves its path via a full archive rescan in
+          // THIS process (the light runtime's caches are process-local). Warm
+          // it while the client is quiet so the rescan is not paid on click.
+          const t2 = Date.now();
+          const sessionRoute = path.join(root, "app", "api", "sessions", "[id]", "route.mjs");
+          const sessionRouteTs = path.join(root, "app", "api", "sessions", "[id]", "route.ts");
+          const sessionFile = fs.existsSync(sessionRoute) ? sessionRoute : sessionRouteTs;
+          if (fs.existsSync(sessionFile)) await loadModule(sessionFile);
+          const sessionReader = await loadModule(libModule("session-reader"));
+          await sessionReader.listAllSessions();
+          console.log(`[runtime:heavy] session archive warm in ${Date.now() - t2}ms`);
+        } catch (error) {
+          console.error("[runtime] session archive warm failed:", error);
+        }
       })
       .catch((e) => console.error("[runtime] prewarm error:", e));
   } catch (e) {

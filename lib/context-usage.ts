@@ -1,9 +1,9 @@
-import { readFileSync } from "fs";
 import { join } from "path";
 import { estimateTokens, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ContextUsage } from "@/lib/pi-types";
 import { resolveCachedModelContextWindow } from "./builtin-provider-models-cache";
 import { getModelOverride } from "./model-overrides";
+import { readJsonFileCached } from "./json-file-cache";
 
 export type ContextUsageSnapshot = ContextUsage;
 
@@ -62,9 +62,10 @@ export function resolveContextWindowFromModelsJson(
   if (!model?.provider || !model.modelId) return null;
   try {
     const path = join(getAgentDir(), "models.json");
-    const data = JSON.parse(readFileSync(path, "utf8")) as {
+    const data = readJsonFileCached<{
       providers?: Record<string, { models?: Array<{ id?: string; contextWindow?: number }> }>;
-    };
+    }>(path);
+    if (!data) return null;
     const providers = data.providers ?? {};
     const providerEntry = providers[model.provider]
       ?? Object.entries(providers).find(([key]) => key.toLowerCase() === model.provider.toLowerCase())?.[1];
@@ -86,9 +87,10 @@ export function resolveContextWindowFromModelsStore(
   if (!model?.provider || !model.modelId) return null;
   try {
     const path = join(getAgentDir(), "models-store.json");
-    const data = JSON.parse(readFileSync(path, "utf8")) as Record<string, {
+    const data = readJsonFileCached<Record<string, {
       models?: Array<{ id?: string; contextWindow?: number }>;
-    }>;
+    }>>(path);
+    if (!data) return null;
     const entry = data[model.provider]
       ?? Object.entries(data).find(([key]) => key.toLowerCase() === model.provider.toLowerCase())?.[1];
     if (!entry?.models?.length) return null;

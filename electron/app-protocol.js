@@ -7,7 +7,6 @@
  * needs to render — the window appeared instantly and then sat empty. Assets now
  * come from Electron's own event loop and cannot be blocked by agent work.
  */
-const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { protocol, net } = require("electron");
@@ -69,11 +68,16 @@ function serveAppProtocol(distDir) {
     const url = new URL(request.url);
     let filePath = resolveAsset(distDir, url.pathname);
 
+    // Async stat only — sync fs on the main-process event loop stalls the
+    // splash and IPC bridge, and every stat is an AV-hookable syscall on Windows.
+    let stat = filePath ? await fsp.stat(filePath).catch(() => null) : null;
+
     // SPA: unknown paths are client routes, not 404s.
-    if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    if (!filePath || !stat || stat.isDirectory()) {
       filePath = path.join(distDir, "index.html");
+      stat = await fsp.stat(filePath).catch(() => null);
     }
-    if (!fs.existsSync(filePath)) {
+    if (!stat) {
       return new Response("Desktop UI not built — run npm run desktop:build", {
         status: 503,
         headers: { "content-type": "text/plain; charset=utf-8" },
