@@ -55,6 +55,11 @@ function getTurnCounts(): Map<string, number> {
   return globalThis.__raincodeMemoryReviewTurnCounts;
 }
 
+/** Teardown hook (rpc-session-start onDestroy): drop the cadence counter. */
+export function clearMemoryReviewState(sessionId: string): void {
+  getTurnCounts().delete(sessionId);
+}
+
 /** Last ~10 user/assistant text snippets on the active branch, ~6KB total. */
 async function readRecentTranscript(sessionPath: string): Promise<string> {
   const { messages } = buildSessionContext(getSessionEntries(sessionPath));

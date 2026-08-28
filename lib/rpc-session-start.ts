@@ -6,6 +6,7 @@
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createRainCodeCustomTools } from "./raincode-custom-tools";
 import { buildMemoryInjectBlock, selectMemoryInjectFacts } from "./project-memory";
+import { clearMemoryReviewState } from "./memory-review";
 import { buildCapabilityBrief } from "./capability-brief";
 import { buildLeanPolicyText } from "./lean-policy";
 import { resolveLeanMode } from "./lean-settings";
@@ -231,6 +232,9 @@ export async function startRpcSession(
       // Background bash jobs die with their owner session (harness parity):
       // kill the PTYs, suppress their notices, drop the records.
       teardownJobsForSession(realSessionId);
+      // Memory-review cadence counter is keyed by session id — same single
+      // teardown point, so the bounded map does not accumulate dead ids.
+      clearMemoryReviewState(realSessionId);
     });
     registry.set(realSessionId, wrapper);
     // When the caller keyed the start lock by a non-temp id that differs from

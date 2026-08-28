@@ -42,7 +42,6 @@ const ABORT_CHANNEL = "raincode-api:abort";
 const LIGHT_EXACT = new Set([
   "/api/home",
   "/api/sessions",
-  "/api/web-settings",
   "/api/health",
   "/api/default-cwd",
   "/api/github",
@@ -50,7 +49,6 @@ const LIGHT_EXACT = new Set([
   "/api/mcp",
   // models.json CRUD only — subpaths that touch ModelRuntime stay heavy.
   "/api/models-config",
-  "/api/debug/sessions",
   "/api/skills/install",
   "/api/skills/search",
 ]);
@@ -65,7 +63,6 @@ const LIGHT_PREFIXES = [
   "/api/file-index",
   "/api/diagnostics",
   "/api/commands",
-  "/api/permissions",
   "/api/mcp",
   "/api/lsp",
   // Accounts are pure fs + fetch (device-code OAuth, no SDK):
@@ -75,6 +72,8 @@ const LIGHT_PREFIXES = [
   "/api/models-config/disabled-models",
   // provider-models without ?fresh=1 is routed in roleForPath (cache-only light).
   // NOT light: /model-overrides, /test, /discover (ModelRuntime)
+  // NOT light: /api/debug/sessions (debug pool lives in heavy, same as the
+  // PTY pin in roleForPath).
 ];
 
 /** @param {string} rawPath */
@@ -89,6 +88,24 @@ function roleForPath(rawPath) {
   if (pathname === "/api/models-config/provider-models") {
     return new URLSearchParams(query).get("fresh") === "1" ? "heavy" : "light";
   }
+
+  // Settings reads are the hot path and stay light. Effect-ful writes
+  // (agentMode / leanMode, flagged via ?effects=1 by web-settings-store)
+  // must run next to the session registry: their side effects iterate live
+  // wrappers, which are process-local to heavy.
+  if (pathname === "/api/web-settings") {
+    return new URLSearchParams(query).get("effects") === "1" ? "heavy" : "light";
+  }
+
+  // The YOLO mode toggle syncs live session wrappers (registry is heavy-local);
+  // plain reads stay light so merely opening the panel never boots the SDK.
+  if (pathname === "/api/permissions") {
+    return new URLSearchParams(query).get("sync") === "1" ? "heavy" : "light";
+  }
+
+  // Debug sessions live in the heavy runtime's process-local pool (the agent
+  // debug tool creates them there) — same pin as PTY below.
+  if (pathname === "/api/debug/sessions") return "heavy";
 
   if (LIGHT_EXACT.has(pathname)) return "light";
   // PTY sessions live in the heavy runtime's process-local registry — the agent

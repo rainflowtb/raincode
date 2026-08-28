@@ -16,10 +16,86 @@ import { getAppUpdateInfo, setAppUpdateInfo, subscribeAppUpdate } from "@/lib/ap
 import {
   fetchWebSettingsWithModels,
   saveWebSettings,
+  useWebSettings,
+  type WebSettingsData,
   type WebSettingsModelOption,
 } from "@/lib/web-settings-store";
 import { defaultLeanModeSettings, type LeanModeSettings } from "@/lib/lean-mode-settings";
 import { useAgentModelThinkingSettings, type AgentModelSaveKey } from "@/hooks/use-agent-model-thinking-settings";
+
+/**
+ * Panel-facing flat view of the settings payload. Derived — never a second
+ * owner: the web-settings-store snapshot is the only cached copy, and every
+ * external writer (share-dialog LAN enable, top-bar widgets) flows through it.
+ */
+const DEFAULT_PREFS = {
+  soundEnabled: true,
+  desktopNotifications: true,
+  notificationSound: true,
+  defaultThinkingLevel: "auto",
+   showThinking: true,
+   showTodos: true,
+   expandReviewDiffs: false,
+   subagentConcurrencyEnabled: true,
+   subagentConcurrencyMax: 4,
+  terminalFont: "",
+  inheritTerminalEnv: true,
+  disableHardwareAcceleration: false,
+  autoCheckUpdates: true,
+  autoDownloadUpdates: false,
+  lanAccessEnabled: false,
+  lanAccessKey: "",
+  projectMemoryEnabled: false,
+  projectMemoryAutoInject: false,
+  projectMemoryTopK: 12,
+  advisorEnabled: false,
+};
+type SettingsPrefs = typeof DEFAULT_PREFS;
+
+function prefsFromSettings(s: Record<string, unknown>, prev: SettingsPrefs): SettingsPrefs {
+  return {
+    ...prev,
+    soundEnabled: typeof s.soundEnabled === "boolean" ? s.soundEnabled : prev.soundEnabled,
+    desktopNotifications: typeof s.desktopNotifications === "boolean" ? s.desktopNotifications : prev.desktopNotifications,
+    notificationSound: typeof s.notificationSound === "boolean" ? s.notificationSound : prev.notificationSound,
+    defaultThinkingLevel: typeof s.defaultThinkingLevel === "string" ? s.defaultThinkingLevel : prev.defaultThinkingLevel,
+     showThinking: typeof s.showThinking === "boolean" ? s.showThinking : prev.showThinking,
+     showTodos: typeof s.showTodos === "boolean" ? s.showTodos : prev.showTodos,
+     expandReviewDiffs: typeof s.expandReviewDiffs === "boolean" ? s.expandReviewDiffs : prev.expandReviewDiffs,
+     subagentConcurrencyEnabled:
+       s.subagentConcurrency && typeof s.subagentConcurrency === "object" && !Array.isArray(s.subagentConcurrency)
+       && typeof (s.subagentConcurrency as { enabled?: unknown }).enabled === "boolean"
+         ? (s.subagentConcurrency as { enabled: boolean }).enabled
+         : prev.subagentConcurrencyEnabled,
+     subagentConcurrencyMax:
+       s.subagentConcurrency && typeof s.subagentConcurrency === "object" && !Array.isArray(s.subagentConcurrency)
+       && typeof (s.subagentConcurrency as { max?: unknown }).max === "number"
+         ? (s.subagentConcurrency as { max: number }).max
+         : prev.subagentConcurrencyMax,
+    terminalFont: typeof s.terminalFont === "string" ? s.terminalFont : prev.terminalFont,
+    inheritTerminalEnv: typeof s.inheritTerminalEnv === "boolean" ? s.inheritTerminalEnv : prev.inheritTerminalEnv,
+    disableHardwareAcceleration: typeof s.disableHardwareAcceleration === "boolean" ? s.disableHardwareAcceleration : prev.disableHardwareAcceleration,
+    autoCheckUpdates: typeof s.autoCheckUpdates === "boolean" ? s.autoCheckUpdates : prev.autoCheckUpdates,
+    autoDownloadUpdates: typeof s.autoDownloadUpdates === "boolean" ? s.autoDownloadUpdates : prev.autoDownloadUpdates,
+    lanAccessEnabled: typeof s.lanAccessEnabled === "boolean" ? s.lanAccessEnabled : prev.lanAccessEnabled,
+    lanAccessKey: typeof s.lanAccessKey === "string" ? s.lanAccessKey : prev.lanAccessKey,
+    projectMemoryEnabled:
+      s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
+      && typeof (s.projectMemory as { enabled?: unknown }).enabled === "boolean"
+        ? (s.projectMemory as { enabled: boolean }).enabled
+        : prev.projectMemoryEnabled,
+    projectMemoryAutoInject:
+      s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
+        ? (s.projectMemory as { autoInject?: unknown }).autoInject === true
+        : prev.projectMemoryAutoInject,
+    projectMemoryTopK:
+      s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
+      && typeof (s.projectMemory as { autoInjectTopK?: unknown }).autoInjectTopK === "number"
+        ? (s.projectMemory as { autoInjectTopK: number }).autoInjectTopK
+        : prev.projectMemoryTopK,
+    advisorEnabled: typeof s.advisorEnabled === "boolean" ? s.advisorEnabled : prev.advisorEnabled,
+  };
+}
 
 export type SettingsSection =
   | "general"
@@ -117,28 +193,53 @@ export function SettingsPage({
     | { kind: "empty" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
-  const [prefs, setPrefs] = useState({
-    soundEnabled: true,
-    desktopNotifications: true,
-    notificationSound: true,
-    defaultThinkingLevel: "auto",
-     showThinking: true,
-     showTodos: true,
-     expandReviewDiffs: false,
-     subagentConcurrencyEnabled: true,
-     subagentConcurrencyMax: 4,
-    terminalFont: "",
-    inheritTerminalEnv: true,
-    disableHardwareAcceleration: false,
-    autoCheckUpdates: true,
-    autoDownloadUpdates: false,
-    lanAccessEnabled: false,
-    lanAccessKey: "",
-    projectMemoryEnabled: false,
-    projectMemoryAutoInject: false,
-    projectMemoryTopK: 12,
-    advisorEnabled: false,
-  });
+  const [prefs, setPrefs] = useState<SettingsPrefs>(DEFAULT_PREFS);
+  // web-settings-store is the single cached owner of the settings payload.
+  // This page also fetches it directly (bundled with the model catalog), but
+  // writes from OUTSIDE this page (share dialog enabling LAN, top-bar widgets,
+  // other windows) only update the store — mirror every store change through
+  // the same snapshot applier so panels never diverge from what is on disk.
+  const webSettings = useWebSettings();
+
+  /** Apply a settings payload to every piece of page state derived from it. */
+  const applySettingsSnapshot = useCallback((data: WebSettingsData | null) => {
+    setTitleModelRef(data?.titleModelRef ?? "");
+    setCommitModelRef(data?.commitModelRef ?? "");
+    setRoleDefaultRef(data?.modelRolesRefs?.default ?? "");
+    setRoleSmolRef(data?.modelRolesRefs?.smol ?? "");
+    setRolePlanRef(data?.modelRolesRefs?.plan ?? "");
+    applyModelSettings(data);
+    const s = data ?? {};
+    setPrefs((prev) => prefsFromSettings(s, prev));
+    if (s.leanMode && typeof s.leanMode === "object" && !Array.isArray(s.leanMode)) {
+      const lm = s.leanMode as Partial<LeanModeSettings>;
+      setLeanMode((prev) => ({
+        enabled: typeof lm.enabled === "boolean" ? lm.enabled : prev.enabled,
+        intensity:
+          lm.intensity === "soft" || lm.intensity === "review" || lm.intensity === "hard"
+            ? lm.intensity
+            : prev.intensity,
+      }));
+    }
+    setAdvisorModelRef(
+      typeof s.advisorModel === "object" && s.advisorModel && !Array.isArray(s.advisorModel)
+        && typeof (s.advisorModel as { provider?: string }).provider === "string"
+        && typeof (s.advisorModel as { modelId?: string }).modelId === "string"
+        ? `${(s.advisorModel as { provider: string }).provider}/${(s.advisorModel as { modelId: string }).modelId}`
+        : "",
+    );
+    if (typeof s.terminalFont === "string") {
+      try { localStorage.setItem("raincode-terminal-font", s.terminalFont); } catch { /* ignore */ }
+    }
+    if (typeof s.soundEnabled === "boolean") {
+      try { localStorage.setItem("raincode-sound-enabled", String(s.soundEnabled)); } catch { /* ignore */ }
+    }
+  }, [applyModelSettings]);
+
+  useEffect(() => {
+    if (!webSettings) return;
+    applySettingsSnapshot(webSettings);
+  }, [webSettings, applySettingsSnapshot]);
   const [leanMode, setLeanMode] = useState<LeanModeSettings>(() => defaultLeanModeSettings());
   const [advisorModelRef, setAdvisorModelRef] = useState("");
   const [restartHint, setRestartHint] = useState(false);
@@ -163,17 +264,11 @@ export function SettingsPage({
       // Settings object is light/fast. Model catalog is heavy — apply prefs as soon
       // as settings arrive so panels stop spinning while models still load.
       const applySettingsPayload = (data: {
-        settings: import("@/lib/web-settings-store").WebSettingsData | null;
-        models?: import("@/lib/web-settings-store").WebSettingsModelOption[];
+        settings: WebSettingsData | null;
+        models?: WebSettingsModelOption[];
       }) => {
         if (cancelled) return;
         if (data.models) setModels(data.models);
-        setTitleModelRef(data.settings?.titleModelRef ?? "");
-        setCommitModelRef(data.settings?.commitModelRef ?? "");
-        setRoleDefaultRef(data.settings?.modelRolesRefs?.default ?? "");
-        setRoleSmolRef(data.settings?.modelRolesRefs?.smol ?? "");
-        setRolePlanRef(data.settings?.modelRolesRefs?.plan ?? "");
-        applyModelSettings(data.settings);
         const s = data.settings ?? {};
         // Network settings UI was removed — clear leftover proxy/CA so they
         // cannot keep breaking OAuth / model calls after the page is gone.
@@ -184,72 +279,7 @@ export function SettingsPage({
         ) {
           void saveWebSettings({ httpProxy: "", proxyBypass: "", customCaCerts: "" });
         }
-        setPrefs((prev) => ({
-          ...prev,
-          soundEnabled: typeof s.soundEnabled === "boolean" ? s.soundEnabled : prev.soundEnabled,
-          desktopNotifications: typeof s.desktopNotifications === "boolean" ? s.desktopNotifications : prev.desktopNotifications,
-          notificationSound: typeof s.notificationSound === "boolean" ? s.notificationSound : prev.notificationSound,
-          defaultThinkingLevel: typeof s.defaultThinkingLevel === "string" ? s.defaultThinkingLevel : prev.defaultThinkingLevel,
-           showThinking: typeof s.showThinking === "boolean" ? s.showThinking : prev.showThinking,
-           showTodos: typeof s.showTodos === "boolean" ? s.showTodos : prev.showTodos,
-           expandReviewDiffs: typeof s.expandReviewDiffs === "boolean" ? s.expandReviewDiffs : prev.expandReviewDiffs,
-           subagentConcurrencyEnabled:
-             s.subagentConcurrency && typeof s.subagentConcurrency === "object" && !Array.isArray(s.subagentConcurrency)
-             && typeof (s.subagentConcurrency as { enabled?: unknown }).enabled === "boolean"
-               ? (s.subagentConcurrency as { enabled: boolean }).enabled
-               : prev.subagentConcurrencyEnabled,
-           subagentConcurrencyMax:
-             s.subagentConcurrency && typeof s.subagentConcurrency === "object" && !Array.isArray(s.subagentConcurrency)
-             && typeof (s.subagentConcurrency as { max?: unknown }).max === "number"
-               ? (s.subagentConcurrency as { max: number }).max
-               : prev.subagentConcurrencyMax,
-          terminalFont: typeof s.terminalFont === "string" ? s.terminalFont : prev.terminalFont,
-          inheritTerminalEnv: typeof s.inheritTerminalEnv === "boolean" ? s.inheritTerminalEnv : prev.inheritTerminalEnv,
-          disableHardwareAcceleration: typeof s.disableHardwareAcceleration === "boolean" ? s.disableHardwareAcceleration : prev.disableHardwareAcceleration,
-          autoCheckUpdates: typeof s.autoCheckUpdates === "boolean" ? s.autoCheckUpdates : prev.autoCheckUpdates,
-          autoDownloadUpdates: typeof s.autoDownloadUpdates === "boolean" ? s.autoDownloadUpdates : prev.autoDownloadUpdates,
-          lanAccessEnabled: typeof s.lanAccessEnabled === "boolean" ? s.lanAccessEnabled : prev.lanAccessEnabled,
-          lanAccessKey: typeof s.lanAccessKey === "string" ? s.lanAccessKey : prev.lanAccessKey,
-          projectMemoryEnabled:
-            s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
-            && typeof (s.projectMemory as { enabled?: unknown }).enabled === "boolean"
-              ? (s.projectMemory as { enabled: boolean }).enabled
-              : prev.projectMemoryEnabled,
-          projectMemoryAutoInject:
-            s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
-              ? (s.projectMemory as { autoInject?: unknown }).autoInject === true
-              : prev.projectMemoryAutoInject,
-          projectMemoryTopK:
-            s.projectMemory && typeof s.projectMemory === "object" && !Array.isArray(s.projectMemory)
-            && typeof (s.projectMemory as { autoInjectTopK?: unknown }).autoInjectTopK === "number"
-              ? (s.projectMemory as { autoInjectTopK: number }).autoInjectTopK
-              : prev.projectMemoryTopK,
-          advisorEnabled: typeof s.advisorEnabled === "boolean" ? s.advisorEnabled : prev.advisorEnabled,
-        }));
-        if (s.leanMode && typeof s.leanMode === "object" && !Array.isArray(s.leanMode)) {
-          const lm = s.leanMode as Partial<LeanModeSettings>;
-          setLeanMode((prev) => ({
-            enabled: typeof lm.enabled === "boolean" ? lm.enabled : prev.enabled,
-            intensity:
-              lm.intensity === "soft" || lm.intensity === "review" || lm.intensity === "hard"
-                ? lm.intensity
-                : prev.intensity,
-          }));
-        }
-        setAdvisorModelRef(
-          typeof s.advisorModel === "object" && s.advisorModel && !Array.isArray(s.advisorModel)
-            && typeof (s.advisorModel as { provider?: string }).provider === "string"
-            && typeof (s.advisorModel as { modelId?: string }).modelId === "string"
-            ? `${(s.advisorModel as { provider: string }).provider}/${(s.advisorModel as { modelId: string }).modelId}`
-            : "",
-        );
-        if (typeof s.terminalFont === "string") {
-          try { localStorage.setItem("raincode-terminal-font", s.terminalFont); } catch { /* ignore */ }
-        }
-        if (typeof s.soundEnabled === "boolean") {
-          try { localStorage.setItem("raincode-sound-enabled", String(s.soundEnabled)); } catch { /* ignore */ }
-        }
-
+        applySettingsSnapshot(data.settings);
       };
 
       // force only after a models mutation (modelsCatalogKey > 0) so disabled/
@@ -276,7 +306,7 @@ export function SettingsPage({
       return () => {
         cancelled = true;
       };
-    }, [applyModelSettings, cwd, modelsCatalogKey]);
+    }, [applyModelSettings, applySettingsSnapshot, cwd, modelsCatalogKey]);
 
   useEffect(() => {
     let cancelled = false;

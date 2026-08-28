@@ -5,7 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { useLocale } from "@/hooks/useLocale";
-import { ensureWebSettings } from "@/lib/web-settings-store";
+import { useWebSettings } from "@/lib/web-settings-store";
 import { apiFetch, apiStream, type ApiStream } from "@/lib/api-transport";
 // xterm.css is vendored into app/globals.css — avoid PostCSS/lightningcss on the package CSS.
 
@@ -333,25 +333,6 @@ export function TerminalPanel({
 
     void start();
 
-    // Apply terminal font from web-settings when available.
-    void ensureWebSettings()
-      .then((settings) => {
-        const font = settings?.terminalFont?.trim();
-        if (!font || disposedRef.current || !termRef.current) return;
-        try {
-          localStorage.setItem("raincode-terminal-font", font);
-        } catch {
-          // ignore
-        }
-        termRef.current.options.fontFamily = resolveTerminalFont(host, font);
-        try {
-          fitRef.current?.fit();
-        } catch {
-          // ignore
-        }
-      })
-      .catch(() => {});
-
     return () => {
       disposedRef.current = true;
       themeObserver.disconnect();
@@ -367,6 +348,25 @@ export function TerminalPanel({
       fitRef.current = null;
     };
   }, [cwd, attachSessionId, persistRemoteOnUnmount, sourceLabel, t]);
+
+  // Live font: the panel stays mounted for the whole workspace lifetime (PTYs
+  // keep running off-screen), so subscribe to the settings store instead of
+  // applying a mount-time snapshot that settings edits could never reach.
+  const terminalFont = useWebSettings()?.terminalFont;
+  useEffect(() => {
+    if (terminalFont === undefined || !termRef.current || !hostRef.current) return;
+    try {
+      localStorage.setItem("raincode-terminal-font", terminalFont.trim());
+    } catch {
+      // ignore
+    }
+    termRef.current.options.fontFamily = resolveTerminalFont(hostRef.current, terminalFont);
+    try {
+      fitRef.current?.fit();
+    } catch {
+      // ignore
+    }
+  }, [terminalFont]);
 
   return (
     <div className="terminal-panel">

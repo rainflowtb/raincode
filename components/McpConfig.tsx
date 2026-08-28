@@ -65,6 +65,7 @@ export function McpConfig({
   onCountChange,
   onFormChange,
   addRequestKey = 0,
+  active = true,
 }: {
   cwd?: string | null;
   onClose: () => void;
@@ -73,6 +74,12 @@ export function McpConfig({
   onCountChange?: (n: number) => void;
   onFormChange?: (open: boolean) => void;
   addRequestKey?: number;
+  /**
+   * Visibility hook for hosts that keep this mounted under `hidden`: reload
+   * the server list whenever the panel becomes visible again (external edits
+   * to mcp.json are invisible to this component while hidden).
+   */
+  active?: boolean;
 }) {
   const { t } = useLocale();
   const [servers, setServers] = useState<McpServerItem[]>([]);
@@ -104,8 +111,9 @@ export function McpConfig({
   }, [cwd]);
 
   useEffect(() => {
+    if (!active) return;
     void load();
-  }, [load]);
+  }, [active, load]);
 
   useEffect(() => {
     onCountChange?.(servers.length);

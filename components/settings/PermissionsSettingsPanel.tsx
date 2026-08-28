@@ -20,6 +20,7 @@ import { Icon } from "../Icon";
 import { SettingsGroup, SettingsPageHeading, SettingsRow } from "./settings-ui";
 import { SettingsToggle } from "../SettingsToggle";
 import { apiFetch } from "@/lib/api-transport";
+import { invalidateWebSettings, useWebSettings } from "@/lib/web-settings-store";
 
 type PolicyDoc = {
   yoloMode?: boolean;
@@ -80,6 +81,15 @@ export function PermissionsSettingsPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The YOLO toggle writes agentMode to raincode.json server-side (outside
+  // web-settings-store's save path), and the composer / other windows write it
+  // through the store. Track the store value so both directions converge here.
+  const storeAgentMode = useWebSettings()?.agentMode;
+  useEffect(() => {
+    if (storeAgentMode === undefined) return;
+    void load();
+  }, [storeAgentMode, load]);
 
   const permissionFromEditor = useCallback((): Record<string, unknown> => {
     if (mode === "json") {
@@ -177,7 +187,7 @@ export function PermissionsSettingsPanel() {
     setYoloMode(next);
     setError(null);
     try {
-      const res = await apiFetch("/api/permissions", {
+      const res = await apiFetch("/api/permissions?sync=1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: next ? "full" : "ask" }),
@@ -185,6 +195,10 @@ export function PermissionsSettingsPanel() {
       const data = await res.json() as { error?: string; yoloMode?: boolean };
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setYoloMode(data.yoloMode === true);
+      // The server rewrote raincode.json agentMode outside saveWebSettings —
+      // refresh the shared store so the composer mode chip and other
+      // subscribers converge instead of staying stale until reboot.
+      invalidateWebSettings();
       setNotice(t("settings.permYoloUpdated"));
     } catch (e) {
       setYoloMode(!next);

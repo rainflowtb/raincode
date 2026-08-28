@@ -19,6 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api-transport";
+import { invalidateAccounts } from "@/lib/accounts-revision-store";
 import { GitPanelEmpty } from "./GitPanelEmpty";
 import { GitCommitDialog } from "./GitCommitDialog";
 import { GitPublishDialog } from "./GitPublishDialog";
@@ -645,6 +646,8 @@ export function GitPanel({
 
   const handleSignedIn = useCallback(() => {
     setSignInOpen(false);
+    // Settings → Accounts reads the same /api/accounts state — notify it.
+    invalidateAccounts();
     // Now connected — re-run the push so the publish dialog opens.
     void runPush();
   }, [runPush]);

@@ -131,6 +131,7 @@ export function PluginsSettings({
               if (!open) setSkillAddKey(0);
             }}
             addRequestKey={skillAddKey}
+            active={tab === "skills" && !mcpFormOpen}
           />
         </div>
       ) : tab === "skills" && !mcpFormOpen ? (
@@ -149,6 +150,7 @@ export function PluginsSettings({
             if (!open) setMcpAddKey(0);
           }}
           addRequestKey={mcpAddKey}
+          active={tab === "mcp"}
         />
       </div>
     </div>

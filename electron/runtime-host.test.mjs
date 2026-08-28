@@ -30,7 +30,6 @@ test("light routes never touch the agent SDK graph", () => {
     "/api/models-config/provider-models?provider=openai",
     "/api/default-cwd",
     "/api/github?cwd=x",
-    "/api/debug/sessions",
     "/api/skills/install",
     "/api/skills/search",
   ];
@@ -72,6 +71,13 @@ test("SDK / ModelRuntime routes stay on heavy", () => {
     "/api/cwd/pty/events?cwd=/tmp",
     "/api/cwd/pty/abc123/events",
     "/api/cwd/pty/abc123/input",
+    // Mode toggle (?sync=1) syncs live session wrappers (registry is heavy-local);
+    // plain reads stay light.
+    "/api/permissions?sync=1",
+    // Debug pool is heavy-local, like PTY.
+    "/api/debug/sessions",
+    // Effect-ful settings writes (agentMode / leanMode) need the heavy registry.
+    "/api/web-settings?effects=1",
   ];
   for (const path of heavy) {
     assert.equal(roleForPath(path), "heavy", path);

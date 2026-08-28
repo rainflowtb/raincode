@@ -74,6 +74,19 @@ export function GeneralSettingsPanel({
     };
   }, []);
 
+  // The panel stays warm-mounted; when the flag changes elsewhere (share
+  // dialog auto-enable), re-read the actual server state instead of keeping
+  // the mount-time snapshot.
+  useEffect(() => {
+    let cancelled = false;
+    void getDesktopLan()?.lanGetState().then((s) => {
+      if (!cancelled && s) setLanState(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [prefs.lanAccessEnabled]);
+
   // Re-read the settings file in the main process and start/stop the server.
   const applyLan = async () => {
     const lan = getDesktopLan();

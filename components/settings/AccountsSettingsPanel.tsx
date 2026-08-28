@@ -4,9 +4,10 @@
  * Settings → Accounts: connect/disconnect optional third-party accounts
  * (GitHub first). Uses the shared GithubConnectModal for the device-code flow.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api-transport";
 import { useLocale } from "@/hooks/useLocale";
+import { getAccountsRevision, subscribeAccountsRevision } from "@/lib/accounts-revision-store";
 import { SettingsGroup, SettingsPageHeading, SettingsRow } from "./settings-ui";
 import {
   GithubConnectModal,
@@ -44,9 +45,12 @@ export function AccountsSettingsPanel() {
     }
   }, []);
 
+  // GitPanel's device-code login mutates the same /api/accounts state — the
+  // shared revision store is the single invalidation signal between readers.
+  const accountsRevision = useSyncExternalStore(subscribeAccountsRevision, getAccountsRevision, () => 0);
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, accountsRevision]);
 
   const disconnect = useCallback(async () => {
     setBusy(true);

@@ -7,6 +7,7 @@ import { useMemo, type ReactNode, type RefObject } from "react";
 import type { AgentMessage, AssistantMessage, ToolResultMessage, UserMessage } from "@/lib/types";
 import { assembleTranscript, getFinalAssistantParts, type ConversationNode } from "@/lib/conversation-nodes";
 import { getVisibleRenderWindow } from "@/lib/chat-lazy-load";
+import { getAssistantErrorMessage, getUserMessageTextAndImages, isHiddenContextMessage } from "@/lib/message-display";
 import { MessageView } from "../MessageView";
 import {
   LIVE_TAIL_RENDER_ITEMS,
@@ -30,6 +31,11 @@ export type TranscriptProps = {
   onFork?: (entryId: string) => void;
   onNavigate?: (entryId: string) => void;
   onEditContent?: (message: UserMessage) => void;
+  /**
+   * Retry the failed turn (rpc "continue"). Transcript offers it only on the
+   * last assistant message when it errored and the session is idle.
+   */
+  onContinue?: (userEntryId: string, message: string, images: Array<{ data: string; mimeType: string }>) => void;
   stopScroll: () => void;
   pageEarlier: () => void;
   messageRefs: RefObject<(HTMLDivElement | null)[]>;
@@ -51,6 +57,7 @@ export function useTranscriptNodes({
   onFork,
   onNavigate,
   onEditContent,
+  onContinue,
   stopScroll,
   pageEarlier,
   messageRefs,
@@ -71,6 +78,32 @@ export function useTranscriptNodes({
   }, [messages]);
 
   const hasStream = streamState.isStreaming && streamState.streamingMessage != null;
+
+  // "Continue" retry is offered only on the LAST assistant message when it
+  // errored and the session is idle — continuing an older turn would rewind
+  // everything recorded after it.
+  const continueActionByIdx = useMemo(() => {
+    const map = new Map<number, () => void>();
+    if (!onContinue || sessionBusy || streamState.isStreaming) return map;
+    let lastAssistantIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]!.role === "assistant") { lastAssistantIdx = i; break; }
+    }
+    if (lastAssistantIdx < 0) return map;
+    if (!getAssistantErrorMessage(messages[lastAssistantIdx]! as AssistantMessage)) return map;
+    for (let j = lastAssistantIdx - 1; j >= 0; j--) {
+      const um = messages[j]!;
+      // Skip model-only context between the failed assistant and its prompt.
+      if (um.role === "custom" && isHiddenContextMessage(um)) continue;
+      if (um.role !== "user") break;
+      const { text, images } = getUserMessageTextAndImages(um as UserMessage);
+      const userEntryId = entryIds[j];
+      if (!userEntryId || (!text.trim() && images.length === 0)) break;
+      map.set(lastAssistantIdx, () => onContinue(userEntryId, text, images));
+      break;
+    }
+    return map;
+  }, [messages, entryIds, sessionBusy, streamState.isStreaming, onContinue]);
 
   const planned = useMemo(() => {
     let lastUserIdx = -1;
@@ -165,6 +198,7 @@ export function useTranscriptNodes({
           showTimestamp={showTimestamp}
           prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
           sessionId={sessionId}
+          onContinue={continueActionByIdx.get(idx)}
           variant={variant}
         />
       );
@@ -267,6 +301,7 @@ export function useTranscriptNodes({
     forkingEntryId,
     onNavigate,
     onEditContent,
+    continueActionByIdx,
     sessionId,
     streamState.isStreaming,
     hasStream,

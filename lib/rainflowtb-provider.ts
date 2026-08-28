@@ -24,30 +24,26 @@ import {
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
-  RAINFLOWTB_CHECK_URL,
   RAINFLOWTB_CLIENT_NAME,
-  RAINFLOWTB_CODING_BASE_URL,
   RAINFLOWTB_DISPLAY_NAME,
-  RAINFLOWTB_LOGIN_URL,
   RAINFLOWTB_PROVIDER_ID,
-  RAINFLOWTB_REFRESH_URL,
-  RAINFLOWTB_TOKEN_URL,
-  RAINFLOWTB_WALLET_BASE_URL,
+  rainflowtbUrls,
+  type RainflowtbDomain,
+  type RainflowtbUrls,
 } from "./rainflowtb-constants";
 import { rainflowtbProofHeaders } from "./rainflowtb-proof";
 import { ensureDeviceRegistered } from "./rainflowtb-device";
 
 /** Best-effort device-key registration; failures only delay restricted-model
  *  access until the next attempt, so login/refresh must never fail on this. */
-function registerDeviceInBackground(accessToken: string): void {
-  ensureDeviceRegistered(accessToken).catch((error) => {
+function registerDeviceInBackground(deviceUrl: string, accessToken: string): void {
+  ensureDeviceRegistered(deviceUrl, accessToken).catch((error) => {
     console.warn("[rainflowtb] device registration failed:", error instanceof Error ? error.message : error);
   });
 }
 export {
   RAINFLOWTB_PROVIDER_ID,
   RAINFLOWTB_DISPLAY_NAME,
-  RAINFLOWTB_BASE_URL,
 } from "./rainflowtb-constants";
 
 /** Total login window and poll cadence. */
@@ -103,8 +99,8 @@ interface LoginStart {
   state?: unknown;
 }
 
-async function startLogin(): Promise<{ loginUrl: string; state: string }> {
-  const res = await apiFetch(`${RAINFLOWTB_LOGIN_URL}?client_name=${encodeURIComponent(RAINFLOWTB_CLIENT_NAME)}`);
+async function startLogin(urls: RainflowtbUrls): Promise<{ loginUrl: string; state: string }> {
+  const res = await apiFetch(`${urls.login}?client_name=${encodeURIComponent(RAINFLOWTB_CLIENT_NAME)}`);
   if (!res.ok) throw new Error(`RAINFLOWTB login start failed (HTTP ${res.status})`);
   const data = (await res.json().catch(() => null)) as LoginStart | null;
   const state = asString(data?.state);
@@ -113,12 +109,12 @@ async function startLogin(): Promise<{ loginUrl: string; state: string }> {
   return { loginUrl, state };
 }
 
-async function pollAuthorized(state: string, signal?: AbortSignal): Promise<void> {
+async function pollAuthorized(urls: RainflowtbUrls, state: string, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + LOGIN_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("Login cancelled");
     try {
-      const res = await apiFetch(`${RAINFLOWTB_CHECK_URL}?state=${encodeURIComponent(state)}`);
+      const res = await apiFetch(`${urls.check}?state=${encodeURIComponent(state)}`);
       if (res.ok) {
         const data = (await res.json().catch(() => null)) as { valid?: unknown } | null;
         if (data?.valid === true) return;
@@ -133,16 +129,16 @@ async function pollAuthorized(state: string, signal?: AbortSignal): Promise<void
   throw new Error("RAINFLOWTB login timed out — please try again");
 }
 
-async function exchangeToken(state: string, signal?: AbortSignal): Promise<TokenResponse> {
-  const res = await apiFetch(`${RAINFLOWTB_TOKEN_URL}?state=${encodeURIComponent(state)}`, { signal });
+async function exchangeToken(urls: RainflowtbUrls, state: string, signal?: AbortSignal): Promise<TokenResponse> {
+  const res = await apiFetch(`${urls.token}?state=${encodeURIComponent(state)}`, { signal });
   if (!res.ok) throw new Error(`RAINFLOWTB token exchange failed (HTTP ${res.status})`);
   const data = (await res.json()) as TokenResponse;
   if (!asString(data.access_token)) throw new Error("RAINFLOWTB token exchange returned no access token");
   return data;
 }
 
-async function refreshBrokerToken(refreshToken: string, signal?: AbortSignal): Promise<TokenResponse> {
-  const res = await apiFetch(RAINFLOWTB_REFRESH_URL, {
+async function refreshBrokerToken(urls: RainflowtbUrls, refreshToken: string, signal?: AbortSignal): Promise<TokenResponse> {
+  const res = await apiFetch(urls.refresh, {
     method: "POST",
     body: JSON.stringify({ refresh_token: refreshToken }),
     signal,
@@ -159,16 +155,31 @@ const rainflowtbOAuth: OAuthAuth = {
   name: RAINFLOWTB_DISPLAY_NAME,
   loginLabel: "使用 RAINFLOWTB 账号登录",
   async login(interaction: AuthInteraction): Promise<OAuthCredential> {
-    const { loginUrl, state } = await startLogin();
+    // Domain pick first: the broker runs on api.rainflowtb.cn (国内) and
+    // api.rainflowtb.com (海外). Every later URL (login page, token endpoints,
+    // model catalog, chat base) derives from this choice, stored on the
+    // credential so refresh/model fetches stay on the same domain.
+    const domainPick = await interaction.prompt({
+      type: "select",
+      message: "选择接入地区",
+      options: [
+        { id: "cn", label: "国内（api.rainflowtb.cn）", description: "中国大陆网络环境下推荐使用" },
+        { id: "com", label: "海外（api.rainflowtb.com）", description: "海外网络环境下推荐使用" },
+      ],
+    });
+    const domain: RainflowtbDomain = domainPick === "cn" ? "cn" : "com";
+    const urls = rainflowtbUrls(domain);
+
+    const { loginUrl, state } = await startLogin(urls);
     interaction.notify({
       type: "auth_url",
       url: loginUrl,
       instructions:
         "在浏览器中完成 RAINFLOWTB 登录并授权。若浏览器没有自动打开，请点击下方链接。",
     });
-    await pollAuthorized(state, interaction.signal);
-    const tokenResp = await exchangeToken(state, interaction.signal);
-    registerDeviceInBackground(asString(tokenResp.access_token));
+    await pollAuthorized(urls, state, interaction.signal);
+    const tokenResp = await exchangeToken(urls, state, interaction.signal);
+    registerDeviceInBackground(urls.device, asString(tokenResp.access_token));
 
     // Channel pick: subscription plan vs wallet. Chosen after login, before
     // any model call — the model catalog and chat base URL follow the pick.
@@ -197,14 +208,17 @@ const rainflowtbOAuth: OAuthAuth = {
       expires: Date.now() + expiresIn * 1000 - 5 * 60_000,
       userId: asString(tokenResp.user?.id),
       username: asString(tokenResp.user?.username),
+      domain,
       channel: channel === "coding" ? ("coding" as Channel) : ("wallet" as Channel),
     };
   },
   async refresh(credential: OAuthCredential, signal?: AbortSignal): Promise<OAuthCredential> {
     if (!credential.refresh) throw new Error("RAINFLOWTB 登录已过期，请重新登录");
-    const data = await refreshBrokerToken(credential.refresh, signal);
+    const domain = (credential as OAuthCredential & { domain?: RainflowtbDomain }).domain;
+    const urls = rainflowtbUrls(domain);
+    const data = await refreshBrokerToken(urls, credential.refresh, signal);
     const expiresIn = typeof data.expires_in === "number" ? data.expires_in : 7 * 24 * 3600;
-    registerDeviceInBackground(asString(data.access_token));
+    registerDeviceInBackground(urls.device, asString(data.access_token));
     return {
       ...credential,
       access: asString(data.access_token),
@@ -217,12 +231,14 @@ const rainflowtbOAuth: OAuthAuth = {
   async toAuth(credential: OAuthCredential) {
     // Restricted models are gated on the per-device proof; make sure the
     // public key is registered before the first gated call (cached per token).
-    await ensureDeviceRegistered(credential.access).catch((error) => {
+    const domain = (credential as OAuthCredential & { domain?: RainflowtbDomain }).domain;
+    const urls = rainflowtbUrls(domain);
+    await ensureDeviceRegistered(urls.device, credential.access).catch((error) => {
       console.warn("[rainflowtb] device registration failed:", error instanceof Error ? error.message : error);
     });
     return {
       apiKey: credential.access,
-      baseUrl: channelBaseUrl(credential.channel as Channel | undefined),
+      baseUrl: channelBaseUrl(domain, credential.channel as Channel | undefined),
       // Official-client proof; the site gates zero-priced models on it.
       headers: {
         ...rainflowtbProofHeaders(credential.access),
@@ -236,8 +252,9 @@ const rainflowtbOAuth: OAuthAuth = {
   },
 };
 
-function channelBaseUrl(channel: Channel | undefined): string {
-  return channel === "coding" ? RAINFLOWTB_CODING_BASE_URL : RAINFLOWTB_WALLET_BASE_URL;
+function channelBaseUrl(domain: RainflowtbDomain | undefined, channel: Channel | undefined): string {
+  const urls = rainflowtbUrls(domain);
+  return channel === "coding" ? urls.coding : urls.wallet;
 }
 
 // ── Model catalog ───────────────────────────────────────────────────────────
@@ -306,10 +323,10 @@ async function fetchRainflowtbModels(context: RefreshModelsContext): Promise<rea
   const token = context.credential?.type === "oauth" ? context.credential.access : "";
   if (!context.allowNetwork || !token) return storedModels;
 
-  const channel = context.credential?.type === "oauth"
-    ? ((context.credential as OAuthCredential & { channel?: Channel }).channel)
+  const cred = context.credential?.type === "oauth"
+    ? (context.credential as OAuthCredential & { domain?: RainflowtbDomain; channel?: Channel })
     : undefined;
-  const baseUrl = channelBaseUrl(channel);
+  const baseUrl = channelBaseUrl(cred?.domain, cred?.channel);
 
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -370,7 +387,7 @@ export function createRainflowtbProvider(): Provider<"openai-completions"> {
   return createProvider({
     id: RAINFLOWTB_PROVIDER_ID,
     name: RAINFLOWTB_DISPLAY_NAME,
-    baseUrl: RAINFLOWTB_WALLET_BASE_URL,
+    baseUrl: rainflowtbUrls().wallet,
     auth: { oauth: rainflowtbOAuth },
     models: [],
     fetchModels: fetchRainflowtbModels,

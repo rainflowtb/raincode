@@ -204,7 +204,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     sessionIdRef, scrollContainerRef,
     promptRunId,
     stickToBottom, resumeStickToBottom, bindScrollContainer, chatContentRef, stopScroll, stickScrollToBottom,
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    handleSend, handleAbort, handleFork, handleNavigate, continueTurn, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
@@ -215,6 +215,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
   const sessionBusy = agentRunning || bashRunning || isCompacting;
+  // Fire-and-forget wrapper: Transcript's per-message continue action.
+  const handleContinueTurn = useCallback((
+    userEntryId: string,
+    message: string,
+    images: Array<{ data: string; mimeType: string }>,
+  ) => {
+    void continueTurn(userEntryId, message, images);
+  }, [continueTurn]);
   // Stable handle for fire-and-forget callbacks created before the hook
   // destructure above (wrappedOnAgentEnd) — they read this at call time.
   const addNoticeRef = useRef(addNotice);
@@ -416,6 +424,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     onFork: handleFork,
     onNavigate: handleNavigate,
     onEditContent: handleEditContent,
+    onContinue: handleContinueTurn,
     stopScroll,
     pageEarlier,
     messageRefs,

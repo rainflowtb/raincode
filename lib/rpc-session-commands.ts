@@ -33,6 +33,83 @@ function resolveSessionContextUsage(session: AgentSessionLike) {
   return resolveContextUsageForUi(session.getContextUsage(), messages);
 }
 
+type PromptLaunch = {
+  message: string;
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  streamingBehavior?: "steer" | "followUp";
+};
+
+/**
+ * Single owner of "start a user turn": journal capture + session.prompt with
+ * its settle/error emission. Used by the "prompt" command and by "continue"
+ * (which rewinds the tree to before a failed turn and re-runs the same user
+ * message — no new command semantics, no second settle path).
+ */
+function launchPrompt(wrapper: AgentSessionWrapper, opts: PromptLaunch): void {
+  wrapper.promptRunning = true;
+  try {
+    // Capture the pre-prompt leaf so /undo can navigate_tree back here
+    // (before this user turn + assistant replies).
+    let leafId: string | undefined;
+    try {
+      const sm = wrapper.inner.sessionManager as {
+        getLeafId?: () => string | null;
+        getLeafEntry?: () => { id?: string } | null;
+      };
+      leafId = sm.getLeafId?.() ?? sm.getLeafEntry?.()?.id ?? undefined;
+    } catch {
+      leafId = undefined;
+    }
+    beginAgentTurn(wrapper.inner.sessionId, leafId ? { userEntryId: leafId } : undefined);
+  } catch {
+    // Journal open is best-effort.
+  }
+  wrapper.inner.prompt(opts.message, {
+    ...(opts.images?.length ? { images: opts.images } : {}),
+    ...(opts.streamingBehavior ? { streamingBehavior: opts.streamingBehavior } : {}),
+    source: "rpc",
+  }).then(() => {
+    wrapper.promptRunning = false;
+    wrapper.resetIdleTimer();
+    // Seal if agent_end was missed (e.g. no model stream).
+    try {
+      sealAgentTurn(wrapper.inner.sessionId);
+    } catch {
+      // ignore
+    }
+    if (!wrapper.isAlive()) return;
+    if (!opts.streamingBehavior) wrapper.emit({ type: "prompt_done" });
+  }).catch((error) => {
+    wrapper.promptRunning = false;
+    wrapper.resetIdleTimer();
+    try {
+      sealAgentTurn(wrapper.inner.sessionId);
+    } catch {
+      // ignore
+    }
+    if (!wrapper.isAlive()) return;
+    invalidateSessionListCache();
+    wrapper.emit({
+      type: "prompt_error",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    if (!opts.streamingBehavior) wrapper.emit({ type: "prompt_done" });
+  });
+}
+
+/** Busy-state guards shared by "prompt" and "continue". */
+function assertSessionCanStartTurn(wrapper: AgentSessionWrapper): void {
+  if (!wrapper.isAlive()) throw new Error("Session destroyed");
+  if (wrapper.inner.isBashRunning) {
+    throw new Error("Cannot send a prompt while a shell command is running");
+  }
+  // Reject concurrent prompts (multi-tab / overlapping POSTs). Steer/follow_up
+  // remain available for mid-turn queueing via their own commands.
+  if (wrapper.promptRunning || wrapper.inner.isStreaming || wrapper.inner.isCompacting) {
+    throw new Error("Cannot send a prompt while the session is busy");
+  }
+}
+
 /** RPC command dispatch for AgentSessionWrapper. */
 export async function dispatchRpcSessionCommand(
   wrapper: AgentSessionWrapper,
@@ -47,14 +124,7 @@ export async function dispatchRpcSessionCommand(
         wrapper.abortRequested = false;
         wrapper.promptRunning = false;
       }
-      if (wrapper.inner.isBashRunning) {
-        throw new Error("Cannot send a prompt while a shell command is running");
-      }
-      // Reject concurrent prompts (multi-tab / overlapping POSTs). Steer/follow_up
-      // remain available for mid-turn queueing via their own commands.
-      if (wrapper.promptRunning || wrapper.inner.isStreaming || wrapper.inner.isCompacting) {
-        throw new Error("Cannot send a prompt while the session is busy");
-      }
+      assertSessionCanStartTurn(wrapper);
       const msgs = (wrapper.inner.agent.state?.messages ?? []) as AgentMessage[];
       const { persist, nextMessages } = applyRepairToMessages(msgs);
       for (const closer of persist) {
@@ -99,56 +169,34 @@ export async function dispatchRpcSessionCommand(
           console.error("[raincode] ephemeral context injection failed:", error instanceof Error ? error.message : error);
         }
       }
-      wrapper.promptRunning = true;
-      try {
-        // Capture the pre-prompt leaf so /undo can navigate_tree back here
-        // (before this user turn + assistant replies).
-        let leafId: string | undefined;
-        try {
-          const sm = wrapper.inner.sessionManager as {
-            getLeafId?: () => string | null;
-            getLeafEntry?: () => { id?: string } | null;
-          };
-          leafId = sm.getLeafId?.() ?? sm.getLeafEntry?.()?.id ?? undefined;
-        } catch {
-          leafId = undefined;
-        }
-        beginAgentTurn(wrapper.inner.sessionId, leafId ? { userEntryId: leafId } : undefined);
-      } catch {
-        // Journal open is best-effort.
-      }
-      wrapper.inner.prompt(command.message as string, {
+      launchPrompt(wrapper, {
+        message: command.message as string,
         ...(promptImages?.length ? { images: promptImages } : {}),
         ...(streamingBehavior ? { streamingBehavior } : {}),
-        source: "rpc",
-      }).then(() => {
-        wrapper.promptRunning = false;
-        wrapper.resetIdleTimer();
-        // Seal if agent_end was missed (e.g. no model stream).
-        try {
-          sealAgentTurn(wrapper.inner.sessionId);
-        } catch {
-          // ignore
-        }
-        if (!wrapper.isAlive()) return;
-        if (!streamingBehavior) wrapper.emit({ type: "prompt_done" });
-      }).catch((error) => {
-        wrapper.promptRunning = false;
-        wrapper.resetIdleTimer();
-        try {
-          sealAgentTurn(wrapper.inner.sessionId);
-        } catch {
-          // ignore
-        }
-        if (!wrapper.isAlive()) return;
-        invalidateSessionListCache();
-        wrapper.emit({
-          type: "prompt_error",
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
-        if (!streamingBehavior) wrapper.emit({ type: "prompt_done" });
       });
       return null;
+    }
+
+    case "continue": {
+      // Retry a failed turn without duplicating the user message: rewind the
+      // tree to the parent of the failed turn's user entry (the errored
+      // user+assistant pair drops into an abandoned branch), then re-run the
+      // same user content through the single prompt-launch path.
+      assertSessionCanStartTurn(wrapper);
+      const userEntryId = command.userEntryId as string;
+      const entry = wrapper.inner.sessionManager.getEntry(userEntryId);
+      const parentId = entry?.parentId ?? null;
+      if (!entry || parentId == null) {
+        throw new Error("Cannot locate the failed turn to continue");
+      }
+      const continueImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
+      const result = await wrapper.inner.navigateTree(parentId, {});
+      if (result.cancelled) return { cancelled: true };
+      launchPrompt(wrapper, {
+        message: command.message as string,
+        ...(continueImages?.length ? { images: continueImages } : {}),
+      });
+      return { cancelled: false };
     }
 
     case "abort": {

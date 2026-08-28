@@ -20,6 +20,7 @@ export function SkillsConfig({
   onCountChange,
   onAddModeChange,
   addRequestKey = 0,
+  active = true,
 }: {
   cwd: string;
   onClose: () => void;
@@ -30,6 +31,12 @@ export function SkillsConfig({
   onCountChange?: (n: number) => void;
   onAddModeChange?: (open: boolean) => void;
   addRequestKey?: number;
+  /**
+   * Visibility hook for hosts that keep this mounted under `hidden`: reload
+   * the catalog whenever the panel becomes visible again (external edits in a
+   * terminal/editor are invisible to this component while hidden).
+   */
+  active?: boolean;
 }) {
   const { t } = useLocale();
   const isMobile = useIsMobile();
@@ -66,12 +73,13 @@ export function SkillsConfig({
   }, [cwd]);
 
   useEffect(() => {
+    if (!active) return;
     setUpdateStatuses({});
     setUpdateError(null);
     setSelected(null);
     setAddMode(false);
     void loadSkills();
-  }, [cwd, loadSkills]);
+  }, [active, cwd, loadSkills]);
 
   useEffect(() => {
     onCountChange?.(skills.length);

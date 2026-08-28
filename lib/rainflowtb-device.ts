@@ -16,7 +16,6 @@ import { createHash, createHmac, generateKeyPairSync, randomUUID, sign as crypto
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, homedir, hostname, platform } from "node:os";
 import { join } from "node:path";
-import { RAINFLOWTB_BASE_URL } from "./rainflowtb-constants";
 
 const IDENTITY_DIR = join(homedir(), ".raincode");
 const IDENTITY_PATH = join(IDENTITY_DIR, "device-identity.json");
@@ -96,13 +95,14 @@ export function deviceProofHeaders(accessToken: string, ts: string, nonce: strin
 /**
  * Register this device's public key with the site (idempotent). Retried on
  * every login/refresh until it succeeds; a failure only means restricted
- * models stay gated until the next attempt.
+ * models stay gated until the next attempt. `deviceUrl` must come from the
+ * credential's chosen domain (rainflowtbUrls(domain).device).
  */
-export async function ensureDeviceRegistered(accessToken: string, signal?: AbortSignal): Promise<void> {
+export async function ensureDeviceRegistered(deviceUrl: string, accessToken: string, signal?: AbortSignal): Promise<void> {
   const identity = getDeviceIdentity();
   const tokenHash = tokenHashHex(accessToken);
   if (identity.registeredFor === tokenHash) return;
-  const res = await fetch(`${RAINFLOWTB_BASE_URL}/oauth/device`, {
+  const res = await fetch(deviceUrl, {
     method: "POST",
     headers: {
       accept: "application/json",

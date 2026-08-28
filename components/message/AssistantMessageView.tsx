@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, ChevronRight, Copy } from "lucide-react";
+import { ArrowDown, Check, Copy } from "lucide-react";
 import { Icon } from "../Icon";
 import { ReviewSummaryCard } from "../ReviewSummaryCard";
 import { copyText } from "@/lib/clipboard";
@@ -21,6 +21,7 @@ import {
   type StreamTpsSample,
 } from "./message-view-utils";
 import { MessageHoverShell } from "./MessageHoverShell";
+import { AssistantErrorBlock } from "./AssistantErrorBlock";
 import { BlockView } from "./blocks/BlockView";
 import { ToolRunGroup } from "./blocks/ToolRunGroup";
 import { groupRunBlocks } from "./tool-run-meta";
@@ -39,6 +40,7 @@ export function AssistantMessageView({
   sessionId,
   entryId,
   variant = "answer",
+  onContinue,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -51,6 +53,8 @@ export function AssistantMessageView({
   sessionId?: string;
   entryId?: string;
   variant?: "answer" | "process";
+  /** Retry the failed turn (rpc "continue"); only set on the last errored assistant message. */
+  onContinue?: () => void;
 }) {
   const { t } = useLocale();
   const isProcess = variant === "process";
@@ -82,7 +86,6 @@ export function AssistantMessageView({
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
   const providerError = getAssistantErrorMessage(message, { isStreaming });
   const [copied, setCopied] = useState(false);
-  const [errorOpen, setErrorOpen] = useState(false);
   const tpsSamplesRef = useRef<StreamTpsSample[]>([]);
   const [tps, setTps] = useState<number | null>(null);
   const blockItemsRef = useRef(blockItems);
@@ -329,77 +332,11 @@ export function AssistantMessageView({
       </div>
 
       {providerError && !isProcess && (
-        <div
-          role="alert"
-          style={{
-            marginTop: blocks.length > 0 ? 8 : 0,
-            color: "var(--destructive)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-            lineHeight: 1.5,
-          }}
-        >
-          <button
-            type="button"
-            aria-expanded={errorOpen}
-            onClick={() => setErrorOpen((v) => !v)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              width: "100%",
-              minHeight: 22,
-              padding: 0,
-              background: "none",
-              border: "none",
-              color: "inherit",
-              cursor: "pointer",
-              textAlign: "left",
-              minWidth: 0,
-              fontSize: "inherit",
-              fontFamily: "inherit",
-            }}
-          >
-            <Icon
-              icon={ChevronRight}
-              size={10}
-              strokeWidth={1.6}
-              style={{
-                flexShrink: 0,
-                opacity: 0.55,
-                transform: errorOpen ? "rotate(90deg)" : "none",
-                transition: "transform 0.15s ease",
-              }}
-            />
-            <span
-              style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                flex: 1,
-                minWidth: 0,
-              }}
-            >
-              Error: {providerError}
-            </span>
-          </button>
-          {errorOpen && (
-            <div
-              style={{
-                marginTop: 4,
-                marginLeft: 17,
-                padding: "6px 8px",
-                border: "1px solid var(--destructive-border)",
-                borderRadius: "var(--radius-sm)",
-                background: "var(--destructive-bg)",
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {providerError}
-            </div>
-          )}
-        </div>
+        <AssistantErrorBlock
+          errorMessage={providerError}
+          hasContent={blocks.length > 0}
+          onContinue={onContinue}
+        />
       )}
     </MessageHoverShell>
   );

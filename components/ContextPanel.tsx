@@ -8,9 +8,20 @@ import { copyText } from "@/lib/clipboard";
 import { useSessionMetrics } from "@/lib/session-metrics-store";
 import { getCompactHandlers, requestCompact, subscribeCompactHandlers } from "@/lib/compact-action-store";
 import { requestNavigateToLeaf } from "@/lib/session-nav-store";
+import { getDesktopLan, type LanServerState } from "@/lib/desktop-lan";
+import { saveWebSettings } from "@/lib/web-settings-store";
 import type { ExtensionStatusItem } from "@/lib/types";
 import { Icon } from "./Icon";
+import { CenteredDialog } from "./CenteredDialog";
 import { apiFetch } from "@/lib/api-transport";
+
+/** Recipient-facing LAN address: prefer a real LAN IP over loopback. */
+function pickLanShareUrl(state: LanServerState): string | null {
+  const urls = state.urls ?? [];
+  return (
+    urls.find((u) => !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(u)) ?? urls[0] ?? null
+  );
+}
 
 function isPermissionStatus(status: { key: string; text: string }): boolean {
   const k = status.key.toLowerCase();
@@ -56,6 +67,9 @@ export function ContextPanel() {
   );
   const [collabBusy, setCollabBusy] = useState(false);
   const [collabUrl, setCollabUrl] = useState<string | null>(null);
+  const [collabError, setCollabError] = useState<string | null>(null);
+  /** Pending collab token waiting for the user's LAN-enable decision. */
+  const [lanPromptToken, setLanPromptToken] = useState<string | null>(null);
   const [journal, setJournal] = useState<{
     canUndo: boolean;
     canRedo: boolean;
@@ -167,10 +181,26 @@ export function ContextPanel() {
     }
   }, [refreshJournal, sessionStats?.sessionId, t]);
 
+  const publishCollabUrl = useCallback((token: string, base: string | null) => {
+    if (!base) {
+      setCollabUrl(null);
+      setCollabError("no reachable URL");
+      return;
+    }
+    const url = `${base}/collab/${token}`;
+    setCollabUrl(url);
+    try {
+      void navigator.clipboard.writeText(url);
+    } catch {
+      // ignore clipboard failures
+    }
+  }, []);
+
   const shareCollab = useCallback(async () => {
     const sid = sessionStats?.sessionId;
     if (!sid) return;
     setCollabBusy(true);
+    setCollabError(null);
     try {
       const res = await apiFetch("/api/collab", {
         method: "POST",
@@ -188,19 +218,52 @@ export function ContextPanel() {
       if (!res.ok || data.error || !data.share?.token) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const url = `${window.location.origin}/collab/${data.share.token}`;
-      setCollabUrl(url);
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        // ignore clipboard failures
+      const token = data.share.token;
+      // The link must be reachable by the recipient: prefer the LAN server
+      // URLs (single owner: lib/desktop-lan.ts). When it is off, ask before
+      // enabling — sharing silently flipping a network switch is not OK.
+      const lan = getDesktopLan();
+      if (lan) {
+        const state = await lan.lanGetState();
+        if (!state.running) {
+          setLanPromptToken(token);
+          return;
+        }
+        publishCollabUrl(token, pickLanShareUrl(state));
+      } else {
+        // Plain web / LAN-browser deployment — origin is already http(s).
+        publishCollabUrl(token, window.location.origin);
       }
-    } catch {
+    } catch (e) {
       setCollabUrl(null);
+      setCollabError(e instanceof Error ? e.message : String(e));
     } finally {
       setCollabBusy(false);
     }
-  }, [sessionStats?.sessionFile, sessionStats?.sessionId, sessionStats?.sessionName]);
+  }, [sessionStats?.sessionFile, sessionStats?.sessionId, sessionStats?.sessionName, publishCollabUrl]);
+
+  const confirmLanEnable = useCallback(async () => {
+    const token = lanPromptToken;
+    setLanPromptToken(null);
+    if (!token) return;
+    setCollabBusy(true);
+    try {
+      // Same two-step contract as the settings toggle: persist the flag first,
+      // then lan-apply — the main process re-reads raincode.json and starts
+      // the server only when lanAccessEnabled is true.
+      await saveWebSettings({ lanAccessEnabled: true });
+      const lan = getDesktopLan();
+      if (!lan) return;
+      const state = await lan.lanApply();
+      if (!state.running) throw new Error(state.error ?? "LAN server failed to start");
+      publishCollabUrl(token, pickLanShareUrl(state));
+    } catch (e) {
+      setCollabUrl(null);
+      setCollabError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCollabBusy(false);
+    }
+  }, [lanPromptToken, publishCollabUrl]);
 
 
   const extensionRows = useMemo(
@@ -578,6 +641,9 @@ export function ContextPanel() {
                       </a>
                     </div>
                   )}
+                  {collabError && !collabUrl && (
+                    <div style={{ fontSize: 11, color: "var(--destructive)" }}>{collabError}</div>
+                  )}
                 </div>
 
                 {sectionHeader(t("shell.messages"))}
@@ -653,6 +719,25 @@ export function ContextPanel() {
           </>
         )}
       </div>
+
+      {lanPromptToken && (
+        <CenteredDialog width={380} label={t("collab.lanEnableTitle")} onClose={() => setLanPromptToken(null)}>
+          <div style={{ padding: "16px 16px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{t("collab.lanEnableTitle")}</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              {t("collab.lanEnableDesc")}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-ghost" onClick={() => setLanPromptToken(null)}>
+                {t("common.cancel")}
+              </button>
+              <button type="button" className="btn-primary" disabled={collabBusy} onClick={() => void confirmLanEnable()}>
+                {collabBusy ? t("common.loading") : t("collab.lanEnableConfirm")}
+              </button>
+            </div>
+          </div>
+        </CenteredDialog>
+      )}
     </div>
   );
 }

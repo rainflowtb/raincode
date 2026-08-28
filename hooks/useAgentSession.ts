@@ -1113,6 +1113,56 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     await navigateToLeaf(entryId);
   }, [navigateToLeaf]);
 
+  /**
+   * Retry a failed turn (errored last assistant message) without duplicating
+   * the user message: the server rewinds the tree to before the failed turn
+   * and re-runs the same user content through the prompt path, then we reload
+   * the transcript from the new leaf. Streaming continues over the existing
+   * SSE connection, governed by the same monotonic run id.
+   */
+  const continueTurn = useCallback(async (
+    userEntryId: string,
+    message: string,
+    images?: Array<{ data: string; mimeType: string }>,
+  ) => {
+    if (agentRunningRef.current || bashRunningRef.current) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const promptRunId = promptRunIdRef.current + 1;
+    abortRequestedRef.current = false;
+    promptRunIdRef.current = promptRunId;
+    streamAcceptRunIdRef.current = promptRunId;
+    sseReconnectAttemptRef.current = 0;
+    cancelEventStreamGrace();
+    agentRunningRef.current = true;
+    setAgentRunning(true);
+    setAgentPhase({ kind: "waiting_model" });
+    dispatch({ type: "start" });
+    void stickScrollToBottom();
+    try {
+      await ensureEventsConnected(sid);
+      const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+      await sendAgentCommand<{ cancelled?: boolean }>(sid, {
+        type: "continue",
+        userEntryId,
+        message,
+        ...(piImages?.length ? { images: piImages } : {}),
+      });
+      setActiveLeafId(null);
+      await loadContext(sid, null);
+    } catch (e) {
+      console.error("Failed to continue turn:", e);
+      addNotice({
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+      agentRunningRef.current = false;
+      setAgentRunning(false);
+      setAgentPhase(null);
+      dispatch({ type: "end" });
+    }
+  }, [addNotice, cancelEventStreamGrace, ensureEventsConnected, loadContext, stickScrollToBottom]);
+
   const handleLeafChange = navigateToLeaf;
 
   const handleModelChange = useCallback(async (provider: string, modelId: string) => {
@@ -1726,7 +1776,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Scroll follow (use-stick-to-bottom)
     stickToBottom, resumeStickToBottom, bindScrollContainer, chatContentRef, stopScroll, stickScrollToBottom,
     // Actions
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    handleSend, handleAbort, handleFork, handleNavigate, continueTurn, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,

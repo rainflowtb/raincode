@@ -143,7 +143,11 @@ export async function saveWebSettings(
     commit({ ...settings, ...options.optimistic }, false);
   }
   try {
-    const res = await apiFetch("/api/web-settings", {
+    // agentMode/leanMode writes have live-session side effects (mode sync,
+    // idle-session reset) that only work in the runtime owning the session
+    // registry — the router pins ?effects=1 to heavy; plain reads stay light.
+    const needsEffects = "agentMode" in patch || "leanMode" in patch;
+    const res = await apiFetch(needsEffects ? "/api/web-settings?effects=1" : "/api/web-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),

@@ -61,14 +61,15 @@ tool populates, which is meaningless in the light process.
 | Path | Notes |
 |------|--------|
 | `/api/home`, `/api/health`, `/api/sessions` | boot / list |
-| `/api/web-settings` | use `?utilityModels=0` from UI; full catalog is deferred |
+| `/api/web-settings` | use `?utilityModels=0` from UI; full catalog is deferred. Effect-ful writes (`agentMode`/`leanMode`) go to heavy via `?effects=1` — their side effects iterate the session registry |
 | `/api/files/*`, `/api/git/*`, `/api/cwd/*`, `/api/worktrees` | workspace chrome |
 | `/api/usage`, `/api/app-update`, `/api/commands`, `/api/diagnostics`, `/api/file-index` | chrome |
-| `/api/permissions`, `/api/mcp`, `/api/lsp` | settings panels (on-disk / PATH) |
+| `/api/mcp`, `/api/lsp` | settings panels (on-disk / PATH) |
+| `/api/permissions` | reads only; the YOLO toggle goes to heavy via `?sync=1` (syncs live session wrappers) |
 | `/api/default-cwd`, `/api/github` | fs / gh |
 | `/api/accounts` | GitHub account store + device-code OAuth (pure fs + fetch) |
 | `/api/models-config/free-models`, `/catalog`, `/disabled-models` | external HTTP / denylist fs; no SDK |
-| `/api/network/test`, `/api/debug/sessions` | network / inspector |
+| `/api/network/test` | network |
 | `/api/skills/install`, `/api/skills/search` | npx wrappers only |
 
 ### Heavy (needs agent package or live session)
@@ -81,6 +82,8 @@ tool populates, which is meaningless in the light process.
 | `/api/project-trust`, `/project-memory`, `/project-init` | SDK trust store / utility model |
 | `/api/sessions/[id]*`, `/api/agent/*` | session entries + RPC |
 | `/api/workspace-journal` | shares the in-memory turn journal with agent write/edit tools |
+| `/api/permissions?sync=1` | mode toggle syncs live session wrappers (registry is heavy-local) |
+| `/api/debug/sessions` | debug session pool is heavy-local, same as `/api/cwd/pty*` |
 | `/api/advisor`, `/api/memory-review`, `/api/collab*` | utility model / SDK collab |
 | `/api/cwd/pty*` | PTY registry is process-local to the heavy runtime — the agent bash tool creates sessions there, so Terminal UI routes must share that process (pinned ahead of the `/api/cwd/` light prefix in `roleForPath`) |
 

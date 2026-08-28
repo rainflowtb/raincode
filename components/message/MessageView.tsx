@@ -36,6 +36,8 @@ interface Props {
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
+  /** Retry the failed turn (rpc "continue"); set only on the last errored assistant message. */
+  onContinue?: () => void;
   /**
    * `process` = intermediate turn chrome (thinking/tools/narration). Quieter
    * scaffold styling, no model/usage chrome. Default is full answer surface.
@@ -43,7 +45,7 @@ interface Props {
   variant?: "answer" | "process";
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, variant }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, onContinue, variant }: Props) {
   if (message.role === "user") {
     return (
       <UserMessageView
@@ -61,7 +63,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     );
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} variant={variant} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} variant={variant} onContinue={onContinue} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -95,6 +97,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId
+    && prev.onContinue === next.onContinue
     && prev.variant === next.variant;
 });
 
