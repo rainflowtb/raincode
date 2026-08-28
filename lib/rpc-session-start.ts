@@ -31,6 +31,7 @@ import { browserMainRequest, isBrowserBridgeAvailable } from "./browser-bridge";
 import { teardownSubagentsForSession } from "./first-party/subagents/host";
 import { teardownJobsForSession } from "./background-jobs";
 import { pruneEphemeralContextMessages } from "./ephemeral-context";
+import { scrubEmptyImageBlocks } from "./empty-image-content";
 import { AGENT_MODE_BRIEF_CUSTOM_TYPE, MEMORY_CONTEXT_CUSTOM_TYPE } from "./types";
 import type { AgentMessage } from "./types";
 
@@ -176,6 +177,10 @@ export async function startRpcSession(
     // SDK's nextTurn path before they became ephemeral (lib/ephemeral-context.ts);
     // strip them from the freshly loaded context. The .jsonl file stays as-is.
     pruneEphemeralContextMessages(inner.agent, [MEMORY_CONTEXT_CUSTOM_TYPE, AGENT_MODE_BRIEF_CUSTOM_TYPE]);
+    // Empty image blocks persisted by a failed capture (e.g. browser screenshot
+    // of a detached view) hard-fail every provider request on replay (GLM 400
+    // code 1214); degrade them to a text note in the loaded context.
+    scrubEmptyImageBlocks(inner.agent);
     // Omitted toolNames (resume / reconnect) still adopts the full coding list so
     // wrapper.mode can strip edit/write in plan without waiting for client set_tools.
     // [] stays all-off. Explicit names are adopted as given. Never pass a non-empty

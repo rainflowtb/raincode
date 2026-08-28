@@ -1,7 +1,7 @@
 {
   "name": "raincode",
   "version": "1.2.2",
-  "description": "Local coding-agent workspace — desktop app:// + dual IPC runtimes, or browser UI",
+  "description": "Local coding-agent workspace \u2014 desktop app:// + dual IPC runtimes, or browser UI",
   "homepage": "https://github.com/rainflowtb/raincode-desktop#readme",
   "repository": {
     "type": "git",
@@ -28,14 +28,14 @@
   ],
   "scripts": {
     "postinstall": "node scripts/fix-node-pty-perms.mjs && node scripts/ensure-electron-adhoc-sign.mjs",
-    "dev": "node scripts/fix-node-pty-perms.mjs && next dev -H 127.0.0.1 -p 30141",
+    "dev": "node scripts/fix-node-pty-perms.mjs && next dev -H 0.0.0.0 -p 30141",
     "dev:lan": "node scripts/fix-node-pty-perms.mjs && next dev -H 0.0.0.0 -p 30141",
     "build": "node scripts/fix-node-pty-perms.mjs && next build --webpack",
     "build:electron": "npm run desktop:build && npm run build && node scripts/prepare-electron-standalone.mjs && node scripts/bundle-runtime-node.mjs && node scripts/bundle-pi-cli.mjs",
     "desktop:dev": "vite",
     "desktop:build": "vite build",
     "daemon": "node daemon/ipc-host.mjs",
-    "start": "node scripts/fix-node-pty-perms.mjs && next start -H 127.0.0.1 -p 30141",
+    "start": "node scripts/fix-node-pty-perms.mjs && next start -H 0.0.0.0 -p 30141",
     "start:lan": "node scripts/fix-node-pty-perms.mjs && next start -H 0.0.0.0 -p 30141",
     "lint": "eslint .",
     "smoke:electron": "node scripts/smoke-electron.mjs",
@@ -62,7 +62,7 @@
   "build": {
     "appId": "com.raincode.app",
     "productName": "RainCode",
-    "copyright": "Copyright © ct-jyjntc",
+    "copyright": "Copyright \u00a9 ct-jyjntc",
     "directories": {
       "output": "dist",
       "buildResources": "electron/icons"

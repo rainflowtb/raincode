@@ -224,7 +224,14 @@ const rainflowtbOAuth: OAuthAuth = {
       apiKey: credential.access,
       baseUrl: channelBaseUrl(credential.channel as Channel | undefined),
       // Official-client proof; the site gates zero-priced models on it.
-      headers: rainflowtbProofHeaders(credential.access),
+      headers: {
+        ...rainflowtbProofHeaders(credential.access),
+        // The gateway Brotli-compresses text/event-stream responses, and Node
+        // undici fails to stream-decode Brotli mid-stream ("TypeError: terminated",
+        // 0 bytes). curl survives via its built-in streaming Brotli decoder.
+        // Request gzip so nginx skips Brotli and the SSE stream stays readable.
+        "Accept-Encoding": "gzip",
+      },
     };
   },
 };

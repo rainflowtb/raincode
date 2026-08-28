@@ -288,6 +288,14 @@ async function screenshotView(viewId) {
   const wc = ensureView(viewId).webContents;
   const image = await wc.capturePage();
   const size = image.getSize();
+  // A detached/hidden view captures as 0x0 with an empty PNG — returning it
+  // would poison the session context (providers reject empty image blocks).
+  if (!size.width || !size.height) {
+    throw new Error(
+      `Screenshot unavailable: view has no rendered content (${size.width}x${size.height}). ` +
+        `The browser view is likely detached — show the Browser panel, then retry.`,
+    );
+  }
   let final = image;
   if (size.width > SCREENSHOT_MAX_WIDTH) {
     final = image.resize({
@@ -296,8 +304,12 @@ async function screenshotView(viewId) {
     });
   }
   const finalSize = final.getSize();
+  const png = final.toPNG();
+  if (!png.length) {
+    throw new Error("Screenshot unavailable: capture produced an empty image.");
+  }
   return {
-    dataBase64: final.toPNG().toString("base64"),
+    dataBase64: png.toString("base64"),
     width: finalSize.width,
     height: finalSize.height,
   };
