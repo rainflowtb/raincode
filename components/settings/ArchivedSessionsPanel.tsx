@@ -4,8 +4,9 @@
  * Settings → Archived: lists soft-archived sessions and lets the user restore
  * or permanently delete them. Backed by GET /api/sessions?archived=1 and the
  * per-session archive route (DELETE to restore, DELETE /api/sessions/[id] to
- * remove forever). Restore is reversible; permanent delete uses an inline
- * two-step confirm so no modal is needed.
+ * remove forever). Restore is reversible; per-row permanent delete uses an
+ * inline two-step confirm, while Delete-all clears every archived session
+ * (DELETE /api/sessions/archived) behind the shared centered ConfirmDialog.
  */
 import { useCallback, useEffect, useState } from "react";
 import { SettingsPageHeading, SettingsGroup, SettingsRow } from "./settings-ui";
@@ -13,6 +14,7 @@ import { apiFetch } from "@/lib/api-transport";
 import { useLocale } from "@/hooks/useLocale";
 import type { SessionInfo } from "@/lib/types";
 import { skillExpansionToCommand } from "@/lib/slash-display";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -25,6 +27,8 @@ export function ArchivedSessionsPanel({ onSessionsChanged }: { onSessionsChanged
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -90,9 +94,41 @@ export function ArchivedSessionsPanel({ onSessionsChanged }: { onSessionsChanged
     }
   }, [markBusy, removeRow]);
 
+  const handleDeleteAll = useCallback(async () => {
+    setDeletingAll(true);
+    try {
+      const res = await apiFetch("/api/sessions/archived", { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ?? `HTTP ${res.status}`);
+      }
+      setSessions([]);
+      setConfirmDeleteAll(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeletingAll(false);
+    }
+  }, []);
+
   return (
     <div className="settings-page-general">
-      <SettingsPageHeading title={t("settings.archived")} description={t("settings.archivedDesc")} />
+      <SettingsPageHeading
+        title={t("settings.archived")}
+        description={t("settings.archivedDesc")}
+        action={
+          sessions && sessions.length > 0 ? (
+            <button
+              type="button"
+              className="btn-danger btn-compact"
+              disabled={deletingAll}
+              onClick={() => setConfirmDeleteAll(true)}
+            >
+              {t("settings.archivedDeleteAll")}
+            </button>
+          ) : undefined
+        }
+      />
       {error && (
         <div style={{ marginBottom: 12, fontSize: 12, color: "var(--destructive)", lineHeight: 1.4 }}>
           {error}
@@ -178,6 +214,17 @@ export function ArchivedSessionsPanel({ onSessionsChanged }: { onSessionsChanged
           })
         )}
       </SettingsGroup>
+      {confirmDeleteAll && (
+        <ConfirmDialog
+          title={t("settings.archivedDeleteAllTitle")}
+          body={t("settings.archivedDeleteAllBody", { count: sessions?.length ?? 0 })}
+          confirmLabel={t("settings.archivedDeleteAllConfirmLabel")}
+          onConfirm={() => void handleDeleteAll()}
+          onCancel={() => setConfirmDeleteAll(false)}
+          busy={deletingAll}
+          destructive
+        />
+      )}
     </div>
   );
 }

@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { statSync, unlinkSync, promises as fsp } from "fs";
-import { join } from "path";
+import { statSync } from "fs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   resolveSessionPath,
   resolveSessionPathAllowingChild,
   resolveSessionIdByPath,
-  invalidateSessionPathCache,
   invalidateSessionListCache,
-  readSessionHeader,
 } from "@/lib/session-reader";
+import { deleteSessionById, SessionNotFoundError } from "@/lib/session-delete";
 import {
   buildSessionContext,
   buildUsageMessages,
@@ -17,7 +15,6 @@ import {
   getSessionEntries,
 } from "@/lib/session-entries";
 import { estimateSessionContextUsage } from "@/lib/context-usage";
-import { getRpcSession } from "@/lib/rpc-registry";
 import { foldProjections } from "@/lib/session-projections";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
@@ -239,51 +236,12 @@ export async function DELETE(
 ) {
   const { id } = await params;
   try {
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    // Read only the bounded header before deleting.
-    const parentSessionPath = readSessionHeader(filePath)?.parentSession;
-
-    // Re-attach all direct children to this session's parent (cascade re-parent)
-    // Scan sibling files in the same directory. Async + header-probe first so a
-    // large session directory doesn't block the event loop reading whole files.
-    const dir = filePath.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
-    try {
-      const files = (await fsp.readdir(dir)).filter((f) => f.endsWith(".jsonl") && join(dir, f) !== filePath);
-      for (const file of files) {
-        const childPath = join(dir, file);
-        try {
-          // Cheap probe: the session header is always line 1 — only rewrite
-          // files whose header actually points at the deleted session.
-          const probe = readSessionHeader(childPath) as { type?: string; parentSession?: string } | null;
-          if (!probe || probe.type !== "session" || probe.parentSession !== filePath) continue;
-          const content = await fsp.readFile(childPath, "utf8");
-          const lines = content.split("\n");
-          const header = JSON.parse(lines[0]) as { type?: string; parentSession?: string };
-          if (header.type === "session" && header.parentSession === filePath) {
-            // Stop a live child wrapper before rewriting its file so we don't
-            // race AgentSession appends (which would drop new entries).
-            const childId = await resolveSessionIdByPath(childPath);
-            if (childId) getRpcSession(childId)?.destroy();
-            header.parentSession = parentSessionPath;
-            lines[0] = JSON.stringify(header);
-            const tmpPath = `${childPath}.reparent.${process.pid}.tmp`;
-            await fsp.writeFile(tmpPath, lines.join("\n"));
-            await fsp.rename(tmpPath, childPath);
-          }
-        } catch { /* skip malformed */ }
-      }
-    } catch { /* skip if dir unreadable */ }
-
-    getRpcSession(id)?.destroy();
-    unlinkSync(filePath);
-    invalidateSessionPathCache(id);
-    invalidateSessionListCache();
+    await deleteSessionById(id);
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (error instanceof SessionNotFoundError) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

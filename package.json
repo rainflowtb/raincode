@@ -1,7 +1,7 @@
 {
   "name": "raincode",
-  "version": "1.2.2",
-  "description": "Local coding-agent workspace \u2014 desktop app:// + dual IPC runtimes, or browser UI",
+  "version": "1.2.3",
+  "description": "Local coding-agent workspace — desktop app:// + dual IPC runtimes, or browser UI",
   "homepage": "https://github.com/rainflowtb/raincode-desktop#readme",
   "repository": {
     "type": "git",
@@ -62,7 +62,7 @@
   "build": {
     "appId": "com.raincode.app",
     "productName": "RainCode",
-    "copyright": "Copyright \u00a9 ct-jyjntc",
+    "copyright": "Copyright © ct-jyjntc",
     "directories": {
       "output": "dist",
       "buildResources": "electron/icons"
