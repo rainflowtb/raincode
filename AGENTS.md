@@ -131,6 +131,10 @@ lib/
   ephemeral-context.ts      state-only context messages (memory recall, mode brief) — never persisted
   memory-review.ts          every-10th-turn utility-model transcript review → retainMemoryFact
   literal-edit.ts + file-observations.ts + agent-edit-tool.ts         edit engine (rule 18)
+  hooks-config.ts           hooks.json stores (user + project) — read/validate/upsert; runtime execution is
+                            first-party/hooks-extension.ts (fresh read per lifecycle event; tool_call blocks via exit code 2)
+  subagent-files.ts         agents/*.md CRUD for custom subagents (user: ~/.raincode/agents, project: <cwd>/.pi/agents);
+                            builtins are managed via ensure-subagent-delegation.ts — UI never writes them
   tool-presets.ts           FULL_TOOL_NAMES + getFullToolNames()
   overlay-scrollbars.ts     floating scrollbar thumbs for [data-overlay-scroll] (native bars width-0
                             app-wide); "gutter" parks thumb in sidebar seam; inset-top/-bottom in view

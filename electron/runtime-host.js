@@ -47,6 +47,10 @@ const LIGHT_EXACT = new Set([
   "/api/github",
   "/api/permissions",
   "/api/mcp",
+  // hooks.json CRUD only — pure fs, same pattern as /api/mcp.
+  "/api/hooks",
+  // agents/*.md CRUD only — pure fs (own frontmatter parser, no SDK import).
+  "/api/subagents",
   "/api/web-settings/events",
   // models.json CRUD only — subpaths that touch ModelRuntime stay heavy.
   "/api/models-config",

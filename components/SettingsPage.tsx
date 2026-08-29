@@ -110,6 +110,8 @@ export type SettingsSection =
   | "skills"
   | "mcp"
   | "tools"
+  | "hooks"
+  | "subagents"
   | "archived";
 
 import {
@@ -120,6 +122,8 @@ import { AccountsSettingsPanel } from "./settings/AccountsSettingsPanel";
 import { ToolsSettingsPanel } from "./settings/ToolsSettingsPanel";
 import { AgentModelsSettingsPanel } from "./settings/AgentModelsSettingsPanel";
 import { MemorySettingsPanel } from "./settings/MemorySettingsPanel";
+import { HooksSettingsPanel } from "./settings/HooksSettingsPanel";
+import { SubagentsSettingsPanel } from "./settings/SubagentsSettingsPanel";
 import { ArchivedSessionsPanel } from "./settings/ArchivedSessionsPanel";
 import { AppearanceSettingsPanel } from "./settings/AppearanceSettingsPanel";
 import { PermissionsSettingsPanel } from "./settings/PermissionsSettingsPanel";
@@ -492,6 +496,8 @@ export function SettingsPage({
       items: [
         { id: "agent", label: t("settings.agent") },
         { id: "memory", label: t("settings.memory") },
+        { id: "subagents", label: t("settings.subagents") },
+        { id: "hooks", label: t("settings.hooks") },
         { id: "permissions", label: t("settings.permissions") },
         { id: "archived", label: t("settings.archived") },
       ],
@@ -805,6 +811,10 @@ export function SettingsPage({
             />
           )}
           {section === "tools" && toolsPanel}
+          {section === "hooks" && <HooksSettingsPanel cwd={cwd} />}
+          {section === "subagents" && (
+            <SubagentsSettingsPanel cwd={cwd} models={models} loadingModels={loadingModels} />
+          )}
         </main>
       </div>
     </div>

@@ -4,6 +4,7 @@
 import {
   createAgentSession,
   DefaultResourceLoader,
+  loadProjectContextFiles,
   SessionManager,
   type ExtensionContext,
   type ModelRuntime,
@@ -117,13 +118,33 @@ function buildSystemPrompt(type: AgentTypeConfig, parentPrompt: string): string 
   return [parentPrompt.trim(), type.systemPrompt.trim()].filter(Boolean).join("\n\n");
 }
 
+/**
+ * inject_agents_md is meaningful only in replace mode: append-mode prompts
+ * already inherit the parent system prompt, which carries the context files.
+ * Best-effort — a broken context file must not prevent the child from spawning.
+ */
+function buildChildSystemPrompt(type: AgentTypeConfig, parentPrompt: string, cwd: string, agentDir: string): string {
+  const base = buildSystemPrompt(type, parentPrompt);
+  if (type.injectAgentsMd !== true || type.promptMode !== "replace") return base;
+  try {
+    const block = loadProjectContextFiles({ cwd, agentDir })
+      .map((file) => file.content.trim())
+      .filter(Boolean)
+      .join("\n\n---\n\n");
+    if (!block) return base;
+    return `${base}\n\n# Project context (AGENTS.md)\n\n${block}`;
+  } catch {
+    return base;
+  }
+}
+
 export async function createChildRun(input: CreateChildRunInput): Promise<ChildRun> {
   const { ctx, type } = input;
   const cwd = ctx.cwd;
   const agentDir = getAgentDir();
   const depth = input.depth ?? 1;
   const canNest = depth < MAX_SUBAGENT_DEPTH;
-  const systemPrompt = buildSystemPrompt(type, ctx.getSystemPrompt());
+  const systemPrompt = buildChildSystemPrompt(type, ctx.getSystemPrompt(), cwd, agentDir);
   const mode = parseAgentMode(readGlobalAgentMode());
 
   const nestedFactory = canNest

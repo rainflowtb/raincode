@@ -65,6 +65,8 @@ tool populates, which is meaningless in the light process.
 | `/api/files/*`, `/api/git/*`, `/api/cwd/*`, `/api/worktrees` | workspace chrome |
 | `/api/usage`, `/api/app-update`, `/api/commands`, `/api/diagnostics`, `/api/file-index` | chrome |
 | `/api/mcp`, `/api/lsp` | settings panels (on-disk / PATH) |
+| `/api/hooks` | hooks.json CRUD (on-disk); the heavy runtime re-reads per event — see `lib/first-party/hooks-extension.ts` |
+| `/api/subagents` | agents/*.md CRUD (on-disk, own frontmatter parser — no SDK import); runtime re-reads at every spawn |
 | `/api/permissions` | reads only; the YOLO toggle goes to heavy via `?sync=1` (syncs live session wrappers) |
 | `/api/default-cwd`, `/api/github` | fs / gh |
 | `/api/accounts` | GitHub account store + device-code OAuth (pure fs + fetch) |

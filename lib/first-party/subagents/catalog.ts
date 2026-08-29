@@ -96,6 +96,8 @@ function loadDir(dir: string, into: Map<string, AgentTypeConfig>): void {
       thinking: asString(frontmatter.thinking),
       maxTurns: typeof frontmatter.max_turns === "number" ? frontmatter.max_turns : undefined,
       enabled: frontmatter.enabled !== false,
+      injectAgentsMd: frontmatter.inject_agents_md === true,
+      color: asString(frontmatter.color),
     });
   }
 }

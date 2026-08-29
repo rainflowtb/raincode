@@ -35,6 +35,10 @@ export type AgentTypeConfig = {
   thinking?: string;
   maxTurns?: number;
   enabled: boolean;
+  /** Replace-mode only: append project context files (AGENTS.md set) to the prompt. */
+  injectAgentsMd?: boolean;
+  /** Settings-UI tag color (visual identity only; unused at spawn time). */
+  color?: string;
 };
 
 export type SubagentRecord = {

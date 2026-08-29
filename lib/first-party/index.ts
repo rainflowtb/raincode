@@ -8,6 +8,7 @@ import { createSubagentsInlineExtension } from "./subagents";
 import { createPermissionInlineExtension } from "./permission";
 import { createMcpInlineExtension } from "./mcp";
 import { createJobsNotifyInlineExtension } from "./jobs-notify";
+import { createHooksInlineExtension } from "./hooks-extension";
 
 /** All first-party factories registered on every full agent session. */
 export function getFirstPartyExtensionFactories(): InlineExtension[] {
@@ -18,6 +19,7 @@ export function getFirstPartyExtensionFactories(): InlineExtension[] {
     createPermissionInlineExtension(),
     createMcpInlineExtension(),
     createJobsNotifyInlineExtension(),
+    createHooksInlineExtension(),
   ];
 }
 
@@ -27,3 +29,4 @@ export { createSubagentsInlineExtension } from "./subagents";
 export { createPermissionInlineExtension } from "./permission";
 export { createMcpInlineExtension } from "./mcp";
 export { createJobsNotifyInlineExtension } from "./jobs-notify";
+export { createHooksInlineExtension } from "./hooks-extension";
