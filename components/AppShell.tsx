@@ -1042,7 +1042,14 @@ export function AppShell() {
         {/* Workspace tabs sit openly on the canvas — the floating panel starts
             below the strip (Review | Explorer | Context | Terminal). */}
         <div className="app-topbar titlebar-drag desktop-top-chrome" style={{ display: rightPanelOpen ? "flex" : "none", flexDirection: "row", alignItems: "center", flexShrink: 0, background: "transparent", height: "var(--titlebar-height)" }}>
-          <div className="titlebar-no-drag right-workspace-tabs">
+          {/* No titlebar-no-drag on this wrapper: the row's drag region then
+              inherits into the wrapper, making the blank strip draggable.
+              Tab buttons carry their own explicit no-drag (app-region
+              inherits down the tree, so without it clicks become drags);
+              the filler's titlebar-drag is effective again once no wrapper
+              !important rule nullifies it. The wrapper keeps its CSS flex:1 —
+              its container-type:inline-size forbids content-based sizing. */}
+          <div className="right-workspace-tabs">
             {workspaceTabs.map((tab) => {
               const active = tab.id === activeWorkspaceTabId;
               const label =
@@ -1056,7 +1063,10 @@ export function AppShell() {
                 <button
                   key={tab.id}
                   type="button"
-                  className={`right-workspace-tab${active ? " is-active" : ""}`}
+                  // Explicit no-drag: the row is a drag region and app-region
+                  // inherits down the tree — without this the tabs swallow
+                  // clicks as window drags.
+                  className={`right-workspace-tab titlebar-no-drag${active ? " is-active" : ""}`}
                   onClick={() => setActiveWorkspaceTabId(tab.id)}
                   title={label}
                   aria-label={label}
