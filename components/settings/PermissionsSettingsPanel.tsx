@@ -20,7 +20,7 @@ import { Icon } from "../Icon";
 import { SettingsGroup, SettingsPageHeading, SettingsRow } from "./settings-ui";
 import { SettingsToggle } from "../SettingsToggle";
 import { apiFetch } from "@/lib/api-transport";
-import { invalidateWebSettings, useWebSettings } from "@/lib/web-settings-store";
+import { useWebSettings } from "@/lib/web-settings-store";
 
 type PolicyDoc = {
   yoloMode?: boolean;
@@ -195,10 +195,10 @@ export function PermissionsSettingsPanel() {
       const data = await res.json() as { error?: string; yoloMode?: boolean };
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setYoloMode(data.yoloMode === true);
-      // The server rewrote raincode.json agentMode outside saveWebSettings —
-      // refresh the shared store so the composer mode chip and other
-      // subscribers converge instead of staying stale until reboot.
-      invalidateWebSettings();
+      // The settings file watcher pushes one revision event per write
+      // (lib/settings-revision.ts) — the shared store and every subscriber
+      // (composer chip, this panel's agentMode effect) converge through that
+      // single path; no per-writer invalidation here.
       setNotice(t("settings.permYoloUpdated"));
     } catch (e) {
       setYoloMode(!next);

@@ -20,6 +20,7 @@ test("light routes never touch the agent SDK graph", () => {
     "/api/usage",
     "/api/app-update",
     "/api/permissions",
+    "/api/web-settings/events",
     "/api/mcp",
     "/api/lsp",
     "/api/models-config",

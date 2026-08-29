@@ -23,6 +23,7 @@ import {
   AGENT_MODE_BRIEF_CUSTOM_TYPE,
   MEMORY_CONTEXT_CUSTOM_TYPE,
   type AgentMessage,
+  type AssistantMessage,
   type ExtensionUiResponse,
 } from "./types";
 import { invalidateUtilityModelRuntimes } from "./utility-model";
@@ -37,13 +38,17 @@ type PromptLaunch = {
   message: string;
   images?: Array<{ type: "image"; data: string; mimeType: string }>;
   streamingBehavior?: "steer" | "followUp";
+  /**
+   * Override the run entry — rpc "continue" runs `agent.continue()` (the SDK
+   * auto-retry path) instead of `prompt()`. Settlement/emission is identical.
+   */
+  run?: () => Promise<void>;
 };
 
 /**
- * Single owner of "start a user turn": journal capture + session.prompt with
+ * Single owner of "start a user turn": journal capture + the run promise with
  * its settle/error emission. Used by the "prompt" command and by "continue"
- * (which rewinds the tree to before a failed turn and re-runs the same user
- * message — no new command semantics, no second settle path).
+ * (same settle path, different runner — no second command semantics).
  */
 function launchPrompt(wrapper: AgentSessionWrapper, opts: PromptLaunch): void {
   wrapper.promptRunning = true;
@@ -64,11 +69,12 @@ function launchPrompt(wrapper: AgentSessionWrapper, opts: PromptLaunch): void {
   } catch {
     // Journal open is best-effort.
   }
-  wrapper.inner.prompt(opts.message, {
+  const run = opts.run ?? (() => wrapper.inner.prompt(opts.message, {
     ...(opts.images?.length ? { images: opts.images } : {}),
     ...(opts.streamingBehavior ? { streamingBehavior: opts.streamingBehavior } : {}),
     source: "rpc",
-  }).then(() => {
+  }));
+  run().then(() => {
     wrapper.promptRunning = false;
     wrapper.resetIdleTimer();
     // Seal if agent_end was missed (e.g. no model stream).
@@ -178,25 +184,41 @@ export async function dispatchRpcSessionCommand(
     }
 
     case "continue": {
-      // Retry a failed turn without duplicating the user message: rewind the
-      // tree to the parent of the failed turn's user entry (the errored
-      // user+assistant pair drops into an abandoned branch), then re-run the
-      // same user content through the single prompt-launch path.
+      // Manual retry of a failed turn, reusing the SDK auto-retry semantics
+      // (AgentSession._prepareRetry + agent.continue): drop the trailing
+      // errored assistant message from agent state — it stays in the session
+      // file for history — and continue the SAME turn. Prior user message,
+      // tool calls, and tool results are all kept; no tree rewind, no
+      // duplicated user message. Run events (message/tool/agent_end) flow
+      // through the session's permanent agent subscription, and settlement is
+      // governed by wrapper.promptRunning via the shared launch path.
       assertSessionCanStartTurn(wrapper);
-      const userEntryId = command.userEntryId as string;
-      const entry = wrapper.inner.sessionManager.getEntry(userEntryId);
-      const parentId = entry?.parentId ?? null;
-      if (!entry || parentId == null) {
-        throw new Error("Cannot locate the failed turn to continue");
+      const state = wrapper.inner.agent.state;
+      const stateMessages = (state?.messages ?? []) as AgentMessage[];
+      const last = stateMessages[stateMessages.length - 1];
+      if (!state || !last || last.role !== "assistant" || (last as AssistantMessage).stopReason !== "error") {
+        throw new Error("The last turn did not end with a failed assistant message");
       }
-      const continueImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
-      const result = await wrapper.inner.navigateTree(parentId, {});
-      if (result.cancelled) return { cancelled: true };
+      state.messages = stateMessages.slice(0, -1);
+      // agent.continue() bypasses AgentSession._runAgentPrompt, the only place
+      // the SDK sets _isAgentRunActive — without mirroring it here isStreaming
+      // /isIdle lie (false/true) while the agent runs, and SDK-internal
+      // consumers (subagent delivery wakes, prompt re-entry guards) fire
+      // against a "busy" agent that looks idle. Restored in `finally` before
+      // the shared settle path runs.
+      const flags = wrapper.inner as AgentSessionLike & { _isAgentRunActive?: boolean };
+      flags._isAgentRunActive = true;
       launchPrompt(wrapper, {
-        message: command.message as string,
-        ...(continueImages?.length ? { images: continueImages } : {}),
+        message: "",
+        run: async () => {
+          try {
+            await wrapper.inner.agent.continue();
+          } finally {
+            flags._isAgentRunActive = false;
+          }
+        },
       });
-      return { cancelled: false };
+      return null;
     }
 
     case "abort": {

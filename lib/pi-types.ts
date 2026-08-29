@@ -130,7 +130,15 @@ export interface AgentSessionLike {
   };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
-  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string; streamingMessage?: unknown; messages?: unknown[] } };
+  readonly agent: {
+    state?: { systemPrompt?: string; thinkingLevel?: string; streamingMessage?: unknown; messages?: unknown[] };
+    /**
+     * pi-agent-core: continues the current turn without adding a user message.
+     * This is the SDK auto-retry path (AgentSession drops the errored assistant
+     * from state, then calls agent.continue()); rpc "continue" reuses it.
+     */
+    continue(): Promise<void>;
+  };
   readonly extensionRunner: ExtensionRunnerLike;
   readonly promptTemplates: readonly PromptTemplateLike[];
   readonly resourceLoader: ResourceLoaderLike;

@@ -52,6 +52,11 @@ Applies to `hooks/useAgentSession.ts`, `lib/rpc-manager.ts`, `components/ChatWin
 19. **Extensions**: prebundled factories preferred. **MUST NOT** add new runtime dependence on jiti / TS `additionalExtensionPaths` except the existing missing-bundle fallback in `builtin-extensions.ts`.
 20. **Migrations**: idempotent and one-way. **MUST NOT** keep permanent read paths for pre-migration shapes after a shipped release (track removal in the declutter blueprint).
 
+### State ownership (the 2026-08 sync sweep)
+
+21. **Writable shared state needs a declared owner + one invalidation path** (blueprint: `docs/state-ownership.md`). Cross-component or cross-client writable state **MUST** live behind a single owner (a `*-store.ts`, or the file itself watched by `lib/settings-revision.ts`) and components **MUST** subscribe / derive from it. **MUST NOT** add a component-local fork hydrated once from a fetch (warm-mounted surfaces never re-render), and **MUST NOT** add per-writer ad-hoc invalidation calls when a shared invalidation path already exists.
+22. **Process-side-effectful writes route to the owning runtime.** A write whose side effects touch process-local state (session registry, PTY pool, debug pool, wrapper mode) **MUST** be pinned to that runtime via `roleForPath` — same pattern as `?fresh=1` / `?effects=1` / `?sync=1`. The light/heavy split means code running in the wrong process silently no-ops on an empty registry.
+
 ### Before you patch (mandatory self-check)
 
 Answer in 1–2 lines each in the reply:
@@ -131,6 +136,11 @@ lib/
                             app-wide); "gutter" parks thumb in sidebar seam; inset-top/-bottom in view
   github.ts / lsp-health.ts / web-settings.ts / agent-client.ts / draft-store.ts / file-paths.ts /
   markdown.ts / npx.ts / pi-types.ts / types.ts                       small helpers, one concern each
+  web-settings-store.ts     renderer settings snapshot — single cached owner; saveWebSettings /
+                            useWebSettings / refreshWebSettings; subscribes to the revision push
+  settings-revision.ts      light-runtime fs watcher on raincode.json + permission policy; fans one
+                            `changed` event per write to every connected renderer (SSE, no polling)
+  accounts-revision-store.ts  invalidation signal between GitPanel and AccountsSettingsPanel
 
 components/   AppShell (layout+tabs) · SessionSidebar (tree+FileExplorer) · ChatWindow (chat+sound)
   ChatInput · MessageView · conversation/Transcript (windowed) · BranchNavigator · ChatMinimap
@@ -222,6 +232,9 @@ Cold load (ChatWindow): first paint mounts `FIRST_PAINT_RENDER_ITEMS` (20) items
 - Compaction uses the SDK native path (`pi-better-compaction` not shipped).
 - Extension runtime UI (confirm/select/input/editor, widgets, status chips, panels) is handled by `rpc-manager` + `ChatWindow`; no package manager UI.
 - `/api/skills` uses `DefaultResourceLoader` (settings paths, package skills, project `.agents/skills` listed as the runtime sees them). Toggling edits only the `disable-model-invocation` frontmatter key — keep it surgical. Install shells `npx skills add ... --agent pi`.
+
+### Cross-client settings invalidation (rule 21/22)
+raincode.json + the permission policy have writers no renderer can see directly — another window, a LAN client, heavy-side mode sync (`persistGlobalAgentMode`). Per-writer cache notification is impossible across the light/heavy split, so the light runtime **watches the two files** (`lib/settings-revision.ts`) and fans one `changed` event per write to every connected renderer over SSE (`/api/web-settings/events`, classified light). `web-settings-store` holds the single renderer snapshot and revalidates on the event (one shared stream per renderer, backoff re-open; no polling). Effect-ful writes are pinned to the process that owns the state: `PUT /api/web-settings?effects=1` (agentMode/leanMode), `POST /api/permissions?sync=1` (YOLO toggle → live wrappers), `?fresh=1` provider catalogs — `roleForPath` decides by query, same as the existing `?fresh=1` precedent.
 
 ### Auth and model config
 `ModelsConfig` merges `~/.raincode/models.json` with pi `AuthStorage`/`ModelRegistry` auth status. OAuth/device-code/manual-code stream via `GET /api/auth/login/[provider]`; manual codes POST back with a short-lived token in `globalThis.__raincodeLoginCallbacks`. API-key routes use `AuthStorage`; status endpoints never return the raw key. Model test route is `app/api/models-config/test/route.ts` (`app/api/models/test/` does not exist).

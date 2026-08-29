@@ -61,7 +61,7 @@ tool populates, which is meaningless in the light process.
 | Path | Notes |
 |------|--------|
 | `/api/home`, `/api/health`, `/api/sessions` | boot / list |
-| `/api/web-settings` | use `?utilityModels=0` from UI; full catalog is deferred. Effect-ful writes (`agentMode`/`leanMode`) go to heavy via `?effects=1` — their side effects iterate the session registry |
+| `/api/web-settings` | use `?utilityModels=0` from UI; full catalog is deferred. Effect-ful writes (`agentMode`/`leanMode`) go to heavy via `?effects=1` — their side effects iterate the session registry. `/events` is the revision push stream (file watcher, see `lib/settings-revision.ts`) |
 | `/api/files/*`, `/api/git/*`, `/api/cwd/*`, `/api/worktrees` | workspace chrome |
 | `/api/usage`, `/api/app-update`, `/api/commands`, `/api/diagnostics`, `/api/file-index` | chrome |
 | `/api/mcp`, `/api/lsp` | settings panels (on-disk / PATH) |

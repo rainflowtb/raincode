@@ -95,6 +95,29 @@ export function hasFinalAssistantAnswer(message: AgentMessage): boolean {
   ));
 }
 
+/**
+ * Whether rpc "continue" may be offered: the LAST assistant errored and it is
+ * the transcript tail (anything visible after it must not be retried away).
+ * The server reuses the SDK auto-retry path (drop the errored message from
+ * state, `agent.continue()`), so no turn content is needed client-side.
+ * Intermediate healthy toolUse assistants / toolResults and chained retry
+ * attempts all belong to the same failed turn — no role-walking required.
+ */
+export function findContinuableTurn(messages: AgentMessage[]): number | null {
+  let assistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "assistant") { assistantIdx = i; break; }
+  }
+  if (assistantIdx < 0) return null;
+  if (!getAssistantErrorMessage(messages[assistantIdx]! as AssistantMessage)) return null;
+  for (let i = messages.length - 1; i > assistantIdx; i--) {
+    const msg = messages[i]!;
+    if (msg.role === "custom" && isHiddenContextMessage(msg)) continue;
+    return null;
+  }
+  return assistantIdx;
+}
+
 export function findFinalAssistantIndex(messages: AgentMessage[], userIdx: number, endIdx: number): number {
   for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
     if (hasFinalAssistantAnswer(messages[candidateIdx])) return candidateIdx;

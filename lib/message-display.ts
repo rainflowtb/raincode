@@ -1,4 +1,4 @@
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, ImageContent, ThinkingContent, TextContent, ToolCallContent } from "./types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
 import {
   AGENT_MODE_BRIEF_CUSTOM_TYPE,
   JOB_RESULTS_CUSTOM_TYPE,
@@ -42,27 +42,6 @@ export function getAssistantErrorMessage(
 ): string | null {
   if (options.isStreaming || message.stopReason !== "error") return null;
   return message.errorMessage?.trim() || "Unknown provider error";
-}
-
-/**
- * Re-extract prompt text + base64 images from a persisted user message —
- * the payload the rpc "continue" command needs to re-run a failed turn.
- * URL-sourced images cannot be re-sent and are dropped.
- */
-export function getUserMessageTextAndImages(message: {
-  content: string | (TextContent | ImageContent)[];
-}): { text: string; images: Array<{ data: string; mimeType: string }> } {
-  if (typeof message.content === "string") return { text: message.content, images: [] };
-  const texts: string[] = [];
-  const images: Array<{ data: string; mimeType: string }> = [];
-  for (const block of message.content) {
-    if (block.type === "text") {
-      texts.push(block.text);
-    } else if (block.type === "image" && block.source.type === "base64" && block.source.data) {
-      images.push({ data: block.source.data, mimeType: block.source.media_type ?? "image/png" });
-    }
-  }
-  return { text: texts.join("\n"), images };
 }
 
 function isFinalAnswerBlock(block: AssistantContentBlock): boolean {

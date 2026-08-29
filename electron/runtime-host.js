@@ -47,6 +47,7 @@ const LIGHT_EXACT = new Set([
   "/api/github",
   "/api/permissions",
   "/api/mcp",
+  "/api/web-settings/events",
   // models.json CRUD only — subpaths that touch ModelRuntime stay heavy.
   "/api/models-config",
   "/api/skills/install",

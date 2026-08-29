@@ -216,12 +216,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   });
   const sessionBusy = agentRunning || bashRunning || isCompacting;
   // Fire-and-forget wrapper: Transcript's per-message continue action.
-  const handleContinueTurn = useCallback((
-    userEntryId: string,
-    message: string,
-    images: Array<{ data: string; mimeType: string }>,
-  ) => {
-    void continueTurn(userEntryId, message, images);
+  const handleContinueTurn = useCallback(() => {
+    void continueTurn();
   }, [continueTurn]);
   // Stable handle for fire-and-forget callbacks created before the hook
   // destructure above (wrappedOnAgentEnd) — they read this at call time.

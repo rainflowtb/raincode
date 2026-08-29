@@ -1114,17 +1114,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [navigateToLeaf]);
 
   /**
-   * Retry a failed turn (errored last assistant message) without duplicating
-   * the user message: the server rewinds the tree to before the failed turn
-   * and re-runs the same user content through the prompt path, then we reload
-   * the transcript from the new leaf. Streaming continues over the existing
-   * SSE connection, governed by the same monotonic run id.
+   * Retry the failed turn via the SDK auto-retry path (rpc "continue"): the
+   * server drops the errored assistant message from agent state and calls
+   * agent.continue() — the same mechanism as the SDK's own auto-retry, so
+   * prior user message, tool calls, and tool results are all kept (no tree
+   * rewind, no duplicated user message). Events stream over the existing SSE
+   * connection, governed by the same monotonic run id; afterwards we reload
+   * the transcript from the settled state.
    */
-  const continueTurn = useCallback(async (
-    userEntryId: string,
-    message: string,
-    images?: Array<{ data: string; mimeType: string }>,
-  ) => {
+  const continueTurn = useCallback(async () => {
     if (agentRunningRef.current || bashRunningRef.current) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
@@ -1141,13 +1139,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     void stickScrollToBottom();
     try {
       await ensureEventsConnected(sid);
-      const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
-      await sendAgentCommand<{ cancelled?: boolean }>(sid, {
-        type: "continue",
-        userEntryId,
-        message,
-        ...(piImages?.length ? { images: piImages } : {}),
-      });
+      await sendAgentCommand(sid, { type: "continue" });
       setActiveLeafId(null);
       await loadContext(sid, null);
     } catch (e) {

@@ -9,7 +9,7 @@
  */
 import { useEffect, useSyncExternalStore } from "react";
 import type { WebSettings } from "@/lib/web-settings";
-import { apiFetch } from "@/lib/api-transport";
+import { apiFetch, apiStream, type ApiStream } from "@/lib/api-transport";
 
 /** Floor between two lightweight reads (matches ChatWindow's own throttle). */
 const REFRESH_MIN_MS = 30_000;
@@ -199,6 +199,39 @@ export function refreshWebSettings(): Promise<WebSettingsData | null> {
   return request;
 }
 
+// ── Cross-client revision push ──────────────────────────────────────────────
+// raincode.json has writers this store can never see directly — another
+// window, a LAN client, heavy-side mode sync. The light runtime watches the
+// file and pushes one "changed" event per write (/api/web-settings/events);
+// one shared stream per renderer reconnects with backoff after a drop.
+let revisionStream: ApiStream | null = null;
+let revisionRetry: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleRevisionRetry(): void {
+  if (revisionRetry || typeof window === "undefined") return;
+  revisionStream?.close();
+  revisionStream = null;
+  revisionRetry = setTimeout(() => {
+    revisionRetry = null;
+    ensureRevisionStream();
+  }, 5_000);
+  revisionRetry.unref?.();
+}
+
+function ensureRevisionStream(): void {
+  if (typeof window === "undefined" || revisionStream) return;
+  const es = apiStream("/api/web-settings/events");
+  revisionStream = es;
+  es.addEventListener("changed", () => {
+    void refreshWebSettings();
+  });
+  es.addEventListener("error", () => {
+    // EventSource reconnects natively while CONNECTING; only a CLOSED stream
+    // (bridge transport or exhausted retries) needs our backoff re-open.
+    if (es.readyState === 2) scheduleRevisionRetry();
+  });
+}
+
 /**
  * Settings for callers that just need the current values. Resolves immediately
  * when something is cached (a stale copy is revalidated in the background) and
@@ -206,6 +239,7 @@ export function refreshWebSettings(): Promise<WebSettingsData | null> {
  * request at most.
  */
 export function ensureWebSettings(): Promise<WebSettingsData | null> {
+  ensureRevisionStream();
   const now = Date.now();
   if (settings !== null) {
     // Stale-while-revalidate: never make a caller wait on a second round trip.
@@ -321,6 +355,7 @@ export function fetchWebSettingsWithModels(
  */
 export function useWebSettings(): WebSettingsData | null {
   useEffect(() => {
+    ensureRevisionStream();
     void ensureWebSettings();
   }, []);
   return useSyncExternalStore(subscribe, getWebSettings, getServerWebSettings);
