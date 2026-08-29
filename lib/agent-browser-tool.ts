@@ -17,6 +17,8 @@ type BrowserState = {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  /** Logical viewport — the size the page keeps while the panel is hidden. */
+  viewport?: { width: number; height: number };
 };
 
 const UNAVAILABLE_TEXT = "Browser is only available in the RainCode desktop app.";
@@ -90,7 +92,8 @@ function textResult(text: string): ToolResult {
 }
 
 function formatState(state: BrowserState): string {
-  return `url: ${state.url || "(none)"}\ntitle: ${state.title || "(none)"}\nloading: ${state.loading}\ncanGoBack: ${state.canGoBack}\ncanGoForward: ${state.canGoForward}`;
+  const vp = state.viewport ? `viewport: ${state.viewport.width}x${state.viewport.height}` : "viewport: (unknown)";
+  return `url: ${state.url || "(none)"}\ntitle: ${state.title || "(none)"}\nloading: ${state.loading}\ncanGoBack: ${state.canGoBack}\ncanGoForward: ${state.canGoForward}\n${vp}`;
 }
 
 export function createBrowserTool(getSessionId: () => string | undefined): ToolDefinitionLike {
@@ -106,17 +109,21 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
     name: "browser",
     label: "browser",
     description:
-      "Drive the built-in desktop browser (a real Chromium view on the user's machine): navigate, " +
+      "Drive the built-in desktop browser panel (a real Chromium view in the app's sidebar): navigate, " +
       "snapshot interactive elements as numbered refs, click/fill by ref, evaluate JavaScript, " +
       "wait for a selector, take screenshots, and debug — console logs/exceptions and network " +
-      "requests (status, timing, response bodies) are captured continuously per tab. Desktop app only.",
-    promptSnippet: "Browse the web in the desktop app: snapshot, then act by element ref",
+      "requests (status, timing, response bodies) are captured continuously per tab. Desktop app only. " +
+      "Pages always open IN THE SIDEBAR; pass width to lay a page out at that resolution " +
+      "(e.g. 1440 desktop / 390 mobile) — the panel fit-zooms it.",
+    promptSnippet: "Browse the web in the desktop app's sidebar browser: navigate, then act by element ref",
     promptGuidelines: [
       "Workflow: navigate, then snapshot, then click/fill using the numbered [ref] ids from the snapshot.",
       "Refs go stale after any navigation or DOM change — run snapshot again before the next action.",
       "localhost and intranet URLs are fine: the browser runs on the user's machine with their logins.",
       "Need several pages at once? Pass a distinct `tab` name (e.g. \"docs\", \"issue-123\") to keep them open side by side; the default tab is \"main\". Use the tabs action to list what is open, and close tabs you are done with.",
       "Debugging: console and network read buffers captured since the last navigation (SPA route changes keep them) — reproduce the issue first, then read. Use response_body with a request id from network to inspect an API payload.",
+      "Viewport semantics: width = page layout width (the panel fit-zooms to show all of it; a hidden sidebar parks the view at this size, never 0). height = parked layout height.",
+      "Screenshots capture the zoomed panel (full logical width included) and need the panel visible.",
     ],
     parameters: Type.Object({
       action: Type.Union(
@@ -151,39 +158,48 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
       limit: Type.Optional(Type.Number({ description: "console/network: max entries to return (default 50, newest last)" })),
       sinceSeq: Type.Optional(Type.Number({ description: "console/network: only entries newer than this buffer seq" })),
       requestId: Type.Optional(Type.String({ description: "response_body: request id from the network action output" })),
+      width: Type.Optional(Type.Number({ description: "Page layout width in px (320–7680). The sidebar browser lays out the page at this width and fit-zooms it into the panel (window.innerWidth reports this value); while the sidebar is hidden the parked view uses it at zoom 1. Default: panel width (no zoom)." })),
+      height: Type.Optional(Type.Number({ description: "Parked height in px (320–7680, default 720) — the layout height while the sidebar is hidden." })),
     }),
     async execute(_toolCallId, args) {
       if (!isBrowserBridgeAvailable()) return textResult(UNAVAILABLE_TEXT);
       const id = viewId(args.tab);
       const action = String(args.action ?? "");
       try {
+        const target = { viewId: id };
+
+        // Optional viewport override — the page lays out at this width
+        // (sidebar fit-zooms it; the parked view keeps it at zoom 1).
+        if (Number.isFinite(Number(args.width)) || Number.isFinite(Number(args.height))) {
+          await browserMainRequest("setViewport", { viewId: id, width: args.width, height: args.height });
+        }
         switch (action) {
           case "navigate": {
-            const state = await browserMainRequest<BrowserState>("navigate", { viewId: id, url: String(args.url ?? "") });
+            const state = await browserMainRequest<BrowserState>("navigate", { ...target, url: String(args.url ?? "") });
             return textResult(`Navigated.\n${formatState(state)}`);
           }
           case "snapshot": {
-            const text = await browserMainRequest<unknown>("evaluate", { viewId: id, expression: SNAPSHOT_EXPRESSION });
+            const text = await browserMainRequest<unknown>("evaluate", { ...target, expression: SNAPSHOT_EXPRESSION });
             return textResult(typeof text === "string" ? text : JSON.stringify(text));
           }
           case "click": {
             const ref = Number(args.ref);
             if (!Number.isFinite(ref)) return errorResult(new Error("ref (number) is required for click"));
-            const text = await browserMainRequest<unknown>("evaluate", { viewId: id, expression: clickExpression(ref) });
+            const text = await browserMainRequest<unknown>("evaluate", { ...target, expression: clickExpression(ref) });
             return textResult(String(text));
           }
           case "fill": {
             const ref = Number(args.ref);
             if (!Number.isFinite(ref)) return errorResult(new Error("ref (number) is required for fill"));
             const text = await browserMainRequest<unknown>("evaluate", {
-              viewId: id,
+              ...target,
               expression: fillExpression(ref, String(args.value ?? "")),
             });
             return textResult(String(text));
           }
           case "evaluate": {
             const value = await browserMainRequest<unknown>("evaluate", {
-              viewId: id,
+              ...target,
               expression: String(args.expression ?? ""),
             });
             const json = JSON.stringify(value, null, 2) ?? "undefined";
@@ -193,7 +209,7 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
             const selector = String(args.selector ?? "");
             if (!selector) return errorResult(new Error("selector is required for wait_for"));
             const text = await browserMainRequest<unknown>("evaluate", {
-              viewId: id,
+              ...target,
               // Capped below the bridge's 45s request timeout so a long wait
               // fails with the in-page TIMEOUT text, not a transport error.
               expression: waitForExpression(
@@ -206,9 +222,10 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
           case "screenshot": {
             const shot = await browserMainRequest<{ dataBase64: string; width: number; height: number }>(
               "screenshot",
-              { viewId: id },
+              target,
             );
-            const file = path.join(os.tmpdir(), `raincode-browser-${id.replace(/[^a-zA-Z0-9_-]/g, "_")}-${Date.now()}.png`);
+            const shotName = id.replace(/[^a-zA-Z0-9_-]/g, "_");
+            const file = path.join(os.tmpdir(), `raincode-browser-${shotName}-${Date.now()}.png`);
             fs.writeFileSync(file, Buffer.from(shot.dataBase64, "base64"));
             const content: ToolResultContent[] = [
               { type: "image", data: shot.dataBase64, mimeType: "image/png" },
@@ -217,7 +234,7 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
             return { content, details: { path: file, width: shot.width, height: shot.height } };
           }
           case "state":
-            return textResult(formatState(await browserMainRequest<BrowserState>("getState", { viewId: id })));
+            return textResult(formatState(await browserMainRequest<BrowserState>("getState", target)));
           case "tabs": {
             const tabs = await browserMainRequest<Array<{ tab: string; url: string; title: string }>>("list", {
               viewId: baseViewId(),
@@ -225,14 +242,15 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
             if (tabs.length === 0) return textResult("No open tabs.");
             return textResult(tabs.map((t) => `${t.tab}: ${t.url || "(blank)"} — ${t.title || "(untitled)"}`).join("\n"));
           }
-          case "close":
-            await browserMainRequest("close", { viewId: id });
+          case "close": {
+            await browserMainRequest("close", target);
             return textResult(`Closed tab "${typeof args.tab === "string" && args.tab.trim() ? args.tab.trim() : "main"}".`);
+          }
           case "console": {
             const res = await browserMainRequest<{
               entries: Array<{ seq: number; level: string; text: string }>;
               lastSeq: number;
-            }>("getConsole", { viewId: id, sinceSeq: Number(args.sinceSeq) || 0 });
+            }>("getConsole", { ...target, sinceSeq: Number(args.sinceSeq) || 0 });
             const level = typeof args.level === "string" ? args.level.trim() : "";
             const matched = level ? res.entries.filter((e) => e.level === level) : res.entries;
             const shown = matched.slice(-Math.min(Number(args.limit) || 50, 200));
@@ -257,7 +275,7 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
                 failed?: string;
               }>;
               lastSeq: number;
-            }>("getNetwork", { viewId: id, sinceSeq: Number(args.sinceSeq) || 0 });
+            }>("getNetwork", { ...target, sinceSeq: Number(args.sinceSeq) || 0 });
             const needle = typeof args.url === "string" ? args.url.trim().toLowerCase() : "";
             const matched = needle ? res.entries.filter((e) => e.url.toLowerCase().includes(needle)) : res.entries;
             const shown = matched.slice(-Math.min(Number(args.limit) || 50, 200));
@@ -276,15 +294,15 @@ export function createBrowserTool(getSessionId: () => string | undefined): ToolD
           case "response_body": {
             const requestId = String(args.requestId ?? "");
             if (!requestId) return errorResult(new Error("requestId is required for response_body (get one from the network action)"));
-            const res = await browserMainRequest<{ body: string }>("getResponseBody", { viewId: id, requestId });
+            const res = await browserMainRequest<{ body: string }>("getResponseBody", { ...target, requestId });
             return textResult(res.body || "(empty body)");
           }
           case "go_back":
-            return textResult(formatState(await browserMainRequest<BrowserState>("goBack", { viewId: id })));
+            return textResult(formatState(await browserMainRequest<BrowserState>("goBack", target)));
           case "go_forward":
-            return textResult(formatState(await browserMainRequest<BrowserState>("goForward", { viewId: id })));
+            return textResult(formatState(await browserMainRequest<BrowserState>("goForward", target)));
           case "reload":
-            return textResult(formatState(await browserMainRequest<BrowserState>("reload", { viewId: id })));
+            return textResult(formatState(await browserMainRequest<BrowserState>("reload", target)));
           default:
             return errorResult(new Error(`unknown browser action: ${action}`));
         }

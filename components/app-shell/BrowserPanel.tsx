@@ -7,10 +7,11 @@
  * this pane is hidden or suspended (panel resize, file-viewer modal, settings).
  */
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { ArrowLeft, ArrowRight, RotateCw, X } from "lucide-react";
 import { useLocale } from "@/hooks/useLocale";
 import { getDesktopBrowser, type BrowserRect, type BrowserState, type BrowserTabInfo } from "@/lib/desktop-browser";
+import { getImagePreviewOverlayOpen, subscribeImagePreviewOverlay } from "@/lib/image-preview-store";
 import { Icon } from "../Icon";
 
 const SCRATCH_VIEW_ID = "scratch";
@@ -39,7 +40,16 @@ export function BrowserPanel({ sessionId, visible, suspended }: BrowserPanelProp
   const [error, setError] = useState<string | null>(null);
   const placeholderRef = useRef<HTMLDivElement | null>(null);
 
-  const attached = Boolean(browser) && visible && !suspended;
+  // Full-screen image lightboxes (PreviewableImage) are local component state,
+  // invisible to AppShell's `suspended` prop — subscribe to their shared store
+  // so the native view detaches while one is open (it paints above the DOM).
+  const imageOverlayOpen = useSyncExternalStore(
+    subscribeImagePreviewOverlay,
+    getImagePreviewOverlayOpen,
+    () => false,
+  );
+
+  const attached = Boolean(browser) && visible && !suspended && !imageOverlayOpen;
 
   // Attach/detach lifecycle: one owner per viewId. The native view sits above
   // the DOM, so any hidden/suspended transition must detach it here.

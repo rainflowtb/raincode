@@ -11,6 +11,8 @@ export type BrowserState = {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  /** Logical viewport — the size the page keeps while the panel is hidden. */
+  viewport: { width: number; height: number };
 };
 
 export type BrowserTabInfo = { tab: string; url: string; title: string };

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { Icon } from "./Icon";
 import { useApiObjectUrl } from "@/hooks/useApiObjectUrl";
+import { setImagePreviewOverlay } from "@/lib/image-preview-store";
 
 interface PreviewableImageProps {
   src: string;
@@ -51,10 +52,15 @@ export function PreviewableImage({
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", onKey, true);
+    // The pooled native browser view paints above DOM and only detaches on
+    // AppShell-level cover signals — this lightbox is local state, so signal
+    // the detach store explicitly.
+    setImagePreviewOverlay(true);
 
     return () => {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener("keydown", onKey, true);
+      setImagePreviewOverlay(false);
     };
   }, [open]);
 

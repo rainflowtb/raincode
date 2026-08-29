@@ -22,10 +22,80 @@ const debugState = new Map();
 let attachedViewId = null;
 /** @type {Electron.BrowserWindow | null} window the attached view lives in. */
 let attachedWindow = null;
+/** Views that remain window children while parked offscreen (detach no longer
+ *  removes them — park-offscreen keeps bounds/zoom alive). addChildView on an
+ *  already-added view is undefined behavior and silently freezes the view. */
+/** @type {Map<string, Electron.BrowserWindow>} */
+const childWindowByView = new Map();
 /** @type {((state: object) => void) | null} main.js forwards this to the renderer. */
 let stateListener = null;
 /** @type {Electron.Session | null} shared so logins persist across views/sessions. */
 let browserSession = null;
+
+/**
+ * Logical viewport per view (agent-settable via the `browser` tool's width).
+ * While the sidebar is visible the page LAYS OUT at the logical width and is
+ * fit-zoomed into the panel (zoom = panelWidth / logicalWidth, so
+ * window.innerWidth always reports the logical width); while hidden the view
+ * parks at the logical size (zoom 1). No device emulation — plain bounds +
+ * webContents.setZoomFactor, which Chromium resolves natively (hit-testing
+ * and in-page clicks stay correct). Explicit overrides only: setting just
+ * height never implies a width.
+ */
+const DEFAULT_PARKED = { width: 1280, height: 720 };
+/** @type {Map<string, { width?: number, height?: number }>} explicit per-view overrides. */
+const viewports = new Map();
+/** Bounds the attached view currently occupies (for zoom recompute). */
+let attachedBounds = null;
+
+function clampViewportSize(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(7680, Math.max(320, n));
+}
+
+function getViewportOverride(viewId) {
+  return viewports.get(viewId);
+}
+
+function getParkedSize(viewId) {
+  const v = getViewportOverride(viewId);
+  return { width: v?.width ?? DEFAULT_PARKED.width, height: v?.height ?? DEFAULT_PARKED.height };
+}
+
+/** The page layout width, or null = "fit panel" (zoom 1, native behavior). */
+function getLogicalWidth(viewId) {
+  return getViewportOverride(viewId)?.width ?? null;
+}
+
+/** Partial override: only valid, explicitly passed sides are stored. */
+function setViewportSize(viewId, width, height) {
+  const w = clampViewportSize(width);
+  const h = clampViewportSize(height);
+  const next = { ...viewports.get(viewId) };
+  if (w) next.width = w;
+  if (h) next.height = h;
+  viewports.set(viewId, next);
+  return getParkedSize(viewId);
+}
+
+/** innerWidth = logical width: zoom the current bounds down/up into it. */
+function applyZoomToBounds(viewId, boundsWidth) {
+  const view = views.get(viewId);
+  if (!view || view.webContents.isDestroyed()) return;
+  const logical = getLogicalWidth(viewId);
+  const factor = logical && boundsWidth > 0 ? boundsWidth / logical : 1;
+  try {
+    view.webContents.setZoomFactor(factor);
+  } catch {
+    // view mid-teardown
+  }
+}
+
+function reapplyZoom(viewId) {
+  const width = attachedViewId === viewId && attachedBounds ? attachedBounds.width : getParkedSize(viewId).width;
+  applyZoomToBounds(viewId, width);
+}
 
 function getBrowserSession() {
   if (!browserSession) browserSession = session.fromPartition("persist:raincode-browser");
@@ -41,7 +111,7 @@ function setStateListener(listener) {
 function computeState(viewId) {
   const view = views.get(viewId);
   if (!view || view.webContents.isDestroyed()) {
-    return { viewId, url: "", title: "", loading: false, canGoBack: false, canGoForward: false };
+    return { viewId, url: "", title: "", loading: false, canGoBack: false, canGoForward: false, viewport: getParkedSize(viewId) };
   }
   const wc = view.webContents;
   return {
@@ -51,6 +121,7 @@ function computeState(viewId) {
     loading: wc.isLoading(),
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
+    viewport: getParkedSize(viewId),
   };
 }
 
@@ -193,6 +264,11 @@ function ensureView(viewId) {
     const st = ensureDebugState(viewId);
     st.console = [];
     st.network = new Map();
+    // Re-assert the logical-width zoom around navigation: Chromium re-applies
+    // the persisted per-origin zoom from the shared partition slightly AFTER
+    // did-navigate, clobbering an immediate set — so reassert again, later.
+    reapplyZoom(viewId);
+    setTimeout(() => reapplyZoom(viewId), 150);
   });
   return view;
 }
@@ -208,16 +284,39 @@ function normalizeRect(rect) {
   };
 }
 
+/** Set attached bounds; the zoom recompute is deferred a tick — applying it
+ *  synchronously in the same block as setBounds is silently dropped. */
+function setAttachedBounds(viewId, view, rect) {
+  view.setBounds(rect);
+  attachedBounds = rect;
+  // The zoom recompute is deferred — applying it synchronously in the same
+  // block as setBounds is silently dropped, and a reparent can re-apply the
+  // persisted origin zoom a beat later, so reassert twice.
+  const apply = () => {
+    if (attachedViewId === viewId) applyZoomToBounds(viewId, rect.width);
+  };
+  setTimeout(apply, 30);
+  setTimeout(apply, 180);
+  setTimeout(apply, 600);
+}
+
 function detachAttachedView() {
   if (!attachedViewId) return;
   const view = views.get(attachedViewId);
   if (view && attachedWindow && !attachedWindow.isDestroyed()) {
+    // Park OFFSCREEN inside the window instead of removing the view: an
+    // un-parented view's setBounds stops driving the layout (verified
+    // empirically on visible windows), which broke the parked logical
+    // viewport. Offscreen keeps bounds + zoom alive (innerWidth stays at the
+    // logical width), browsing keeps running, and capturePage keeps a surface.
+    const b = attachedBounds ?? { width: 500, height: 800 };
     try {
-      attachedWindow.contentView.removeChildView(view);
+      view.setBounds({ x: -10000, y: 0, width: b.width, height: b.height });
     } catch {
-      // already detached
+      // view mid-teardown
     }
   }
+  attachedBounds = null;
   attachedViewId = null;
   attachedWindow = null;
 }
@@ -229,11 +328,8 @@ function withScheme(url) {
   return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw) ? raw : `https://${raw}`;
 }
 
-/** Resolves with the post-load BrowserState; rejects with the did-fail-load description. */
-function navigateView(viewId, url) {
-  const view = ensureView(viewId);
-  const wc = view.webContents;
-  const target = withScheme(url);
+/** Resolves on load settle (success or superseded); rejects with did-fail-load/timeout. */
+function loadUrlWithTimeout(wc, target) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (error) => {
@@ -242,7 +338,7 @@ function navigateView(viewId, url) {
       clearTimeout(timer);
       wc.removeListener("did-fail-load", onFailLoad);
       if (error) reject(error);
-      else resolve(computeState(viewId));
+      else resolve(undefined);
     };
     const timer = setTimeout(() => {
       finish(new Error(`Navigation timed out after ${NAVIGATE_TIMEOUT_MS / 1000}s: ${target}`));
@@ -269,9 +365,14 @@ function navigateView(viewId, url) {
   });
 }
 
-async function evaluateInView(viewId, expression) {
+/** Resolves with the post-load BrowserState; rejects with the did-fail-load description. */
+async function navigateView(viewId, url) {
   const wc = ensureView(viewId).webContents;
-  attachDebugger(viewId, wc);
+  await loadUrlWithTimeout(wc, withScheme(url));
+  return computeState(viewId);
+}
+
+async function evaluateWebContents(wc, expression) {
   const result = await wc.debugger.sendCommand("Runtime.evaluate", {
     expression: String(expression ?? ""),
     returnByValue: true,
@@ -284,8 +385,13 @@ async function evaluateInView(viewId, expression) {
   return result.result?.value;
 }
 
-async function screenshotView(viewId) {
+async function evaluateInView(viewId, expression) {
   const wc = ensureView(viewId).webContents;
+  attachDebugger(viewId, wc);
+  return evaluateWebContents(wc, expression);
+}
+
+async function screenshotWebContents(wc) {
   const image = await wc.capturePage();
   const size = image.getSize();
   // A detached/hidden view captures as 0x0 with an empty PNG — returning it
@@ -315,12 +421,26 @@ async function screenshotView(viewId) {
   };
 }
 
+async function screenshotView(viewId) {
+  return screenshotWebContents(ensureView(viewId).webContents);
+}
+
 async function destroyView(viewId) {
   const view = views.get(viewId);
   if (!view) return;
   if (attachedViewId === viewId) detachAttachedView();
+  const owner = childWindowByView.get(viewId);
+  if (owner && !owner.isDestroyed()) {
+    try {
+      owner.contentView.removeChildView(view);
+    } catch {
+      // not a child anymore
+    }
+  }
+  childWindowByView.delete(viewId);
   views.delete(viewId);
   debugState.delete(viewId);
+  viewports.delete(viewId);
   try {
     if (!view.webContents.isDestroyed()) view.webContents.destroy();
   } catch {
@@ -363,8 +483,19 @@ async function handleRenderer(payload, getWindow) {
       const win = getWindow();
       if (win && !win.isDestroyed()) {
         detachAttachedView();
-        win.contentView.addChildView(view);
-        if (payload?.rect) view.setBounds(normalizeRect(payload.rect));
+        // Park-offscreen views are still window children — re-adding is
+        // undefined behavior and freezes the view; add only when parentless.
+        if (childWindowByView.get(viewId) !== win) {
+          try {
+            win.contentView.addChildView(view);
+          } catch {
+            // race with teardown
+          }
+        }
+        childWindowByView.set(viewId, win);
+        if (payload?.rect) {
+          setAttachedBounds(viewId, view, normalizeRect(payload.rect));
+        }
         // The panel card is rounded; the native view paints above the DOM and
         // ignores CSS clipping, so its corners must be rounded natively.
         const radius = Number(payload?.radius);
@@ -382,9 +513,24 @@ async function handleRenderer(payload, getWindow) {
     }
     case "setBounds": {
       if (attachedViewId && payload?.rect) {
-        views.get(attachedViewId)?.setBounds(normalizeRect(payload.rect));
+        const rect = normalizeRect(payload.rect);
+        // Zero-area pushes happen transiently while the panel collapses;
+        // applying them would hand the page a degenerate size. The detach
+        // path re-parks the view at its logical viewport instead.
+        if (rect.width > 0 && rect.height > 0) {
+          const view = views.get(attachedViewId);
+          if (view) setAttachedBounds(attachedViewId, view, rect);
+        }
       }
       return undefined;
+    }
+    case "setViewport": {
+      if (!viewId) throw new Error("viewId is required");
+      setViewportSize(viewId, payload?.width, payload?.height);
+      reapplyZoom(viewId);
+      const state = computeState(viewId);
+      emitState(viewId);
+      return state;
     }
     case "navigate": {
       if (!viewId) throw new Error("viewId is required");
@@ -427,6 +573,10 @@ async function handleRuntime(action, params) {
     switch (action) {
       case "navigate":
         return { ok: true, data: await navigateView(viewId, params?.url) };
+      case "setViewport":
+        setViewportSize(viewId, params?.width, params?.height);
+        reapplyZoom(viewId);
+        return { ok: true, data: computeState(viewId) };
       case "evaluate":
         return { ok: true, data: await evaluateInView(viewId, params?.expression) };
       case "screenshot":
